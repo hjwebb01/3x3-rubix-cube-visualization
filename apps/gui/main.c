@@ -8,6 +8,7 @@
  *   Space             play / pause the solution
  *   Left / Right      step through the solution, Home / End jump
  */
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -30,8 +31,6 @@ const Color STICKER_COLORS[NUM_COLORS] = {
     {25, 90, 210, 255},   /* blue */
 };
 
-#define FAST_SECONDS 0.06f
-
 void app_set_status(App *a, bool error, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -42,44 +41,17 @@ void app_set_status(App *a, bool error, const char *fmt, ...) {
 
 bool app_busy(const App *a) { return atomic_load(&a->solving) != 0; }
 
-static void enqueue(App *a, Move m, bool fast, int sol_dir) {
-    if (a->qtail - a->qhead >= QUEUE_MAX) app_flush(a);
-    a->queue[a->qtail % QUEUE_MAX] = (QueuedMove){m, fast, sol_dir};
-    a->qtail++;
-}
-
-/* A turn finishing on screen: the logical cube and the solution's done count move together. */
-static void apply_queued(App *a, QueuedMove q) {
-    cube_apply(&a->cube, q.m);
-    a->done_pos += q.sol_dir;
-}
-
-void app_flush(App *a) {
-    if (a->animating) apply_queued(a, a->anim);
-    a->animating = false;
-    for (; a->qhead < a->qtail; a->qhead++) apply_queued(a, a->queue[a->qhead % QUEUE_MAX]);
-    a->qhead = a->qtail = 0;
-}
-
-static void drop_solution(App *a) {
-    if (!a->has_sol) return;
-    app_flush(a);
-    a->has_sol = false;
-    a->playing = false;
-}
-
 void app_user_moves(App *a, const Move *m, int n, bool fast) {
     if (app_busy(a) || a->edit_mode) return;
-    drop_solution(a);
-    for (int i = 0; i < n; i++) enqueue(a, m[i], fast, 0);
+    playback_turn(&a->pb, m, n, fast);
 }
 
 void app_scramble(App *a) {
     if (app_busy(a)) return;
     app_set_edit(a, false);
-    drop_solution(a);
-    app_flush(a);
-    cube_reset(&a->cube);
+    Cube solved;
+    cube_reset(&solved);
+    playback_set_cube(&a->pb, &solved);
     Move scr[25];
     scramble_generate(scr, 25, &a->rng);
     char buf[256];
@@ -90,9 +62,9 @@ void app_scramble(App *a) {
 
 void app_reset(App *a) {
     if (app_busy(a)) return;
-    drop_solution(a);
-    app_flush(a);
-    cube_reset(&a->cube);
+    Cube solved;
+    cube_reset(&solved);
+    playback_set_cube(&a->pb, &solved);
     app_set_status(a, false, "Reset to solved");
 }
 
@@ -105,15 +77,16 @@ static void *solve_worker(void *arg) {
 
 void app_start_solve(App *a) {
     if (app_busy(a)) return;
-    drop_solution(a);
-    app_flush(a);
-    const char *err = cube_validate(&a->cube);
+    playback_drop_solution(&a->pb);
+    playback_flush(&a->pb);
+    Cube cur = *playback_view(&a->pb).cube;
+    const char *err = cube_validate(&cur);
     if (err) {
         app_set_status(a, true, "Cannot solve: %s", err);
         return;
     }
     app_set_edit(a, false);
-    a->solve_input = a->cube;
+    a->solve_input = cur;
     atomic_store(&a->solving, 1);
     if (pthread_create(&a->worker, NULL, solve_worker, a) != 0) {
         atomic_store(&a->solving, 0);
@@ -131,53 +104,28 @@ static void poll_solver(App *a) {
         app_set_status(a, true, "%s failed: %s", solver_name(a->method), a->solve_error);
         return;
     }
-    a->sol = a->solve_output;
-    a->sol_start = a->cube;
-    a->sol_pos = 0;
-    a->done_pos = 0;
-    a->sol_method = a->method;
-    a->has_sol = true;
-    a->sol_scroll = 0;
-    a->follow_current = true;
-    if (a->sol.n == 0) {
+    const Solution *sol = &a->solve_output;
+    playback_load(&a->pb, sol);
+    if (!playback_view(&a->pb).sol) {
         app_set_status(a, false, "Already solved");
-        a->has_sol = false;
         return;
     }
-    a->playing = !a->teach; /* in teach mode, read the first lesson before playing */
-    a->teach_paused_at = 0;
-    app_set_status(a, false, "%s: %d moves in %.1f ms", solver_name(a->method), a->sol.n, a->sol.ms);
-}
-
-void app_step(App *a, int dir) {
-    if (!a->has_sol) return;
-    if (dir > 0 && a->sol_pos < a->sol.n) enqueue(a, a->sol.moves[a->sol_pos++], false, 1);
-    if (dir < 0 && a->sol_pos > 0) enqueue(a, move_inverse(a->sol.moves[--a->sol_pos]), false, -1);
+    a->sol_method = a->method;
+    a->sol_scroll = 0;
     a->follow_current = true;
-}
-
-void app_jump(App *a, int pos) {
-    if (!a->has_sol) return;
-    if (pos < 0) pos = 0;
-    if (pos > a->sol.n) pos = a->sol.n;
-    a->animating = false;
-    a->qhead = a->qtail = 0;
-    a->cube = a->sol_start;
-    cube_apply_seq(&a->cube, a->sol.moves, pos);
-    a->sol_pos = pos;
-    a->done_pos = pos;
-    a->follow_current = true;
+    a->follow_seen = 0;
+    app_set_status(a, false, "%s: %d moves in %.1f ms", solver_name(a->method), sol->n, sol->ms);
 }
 
 void app_set_edit(App *a, bool on) {
     if (on == a->edit_mode) return;
     if (on) {
         if (app_busy(a)) return;
-        drop_solution(a);
-        app_flush(a);
+        playback_drop_solution(&a->pb);
+        playback_flush(&a->pb);
         app_set_status(a, false, "Edit mode: pick a color, click stickers (3D or net)");
     } else {
-        const char *err = cube_validate(&a->cube);
+        const char *err = cube_validate(playback_view(&a->pb).cube);
         if (err)
             app_set_status(a, true, "Warning: %s", err);
         else
@@ -187,43 +135,6 @@ void app_set_edit(App *a, bool on) {
 }
 
 /* ---------- per-frame update ---------- */
-
-static bool at_step_start(const App *a) {
-    for (int i = 1; i < a->sol.nsteps; i++)
-        if (a->sol.steps[i].count && a->sol.steps[i].start == a->sol_pos) return true;
-    return false;
-}
-
-static void update_animation(App *a, float dt) {
-    for (int guard = 0; guard < 2 * SOL_MAX_MOVES + QUEUE_MAX; guard++) {
-        if (!a->animating) {
-            if (a->qhead == a->qtail && a->playing && a->has_sol) {
-                if (a->teach && a->sol_pos != a->teach_paused_at && at_step_start(a)) {
-                    a->playing = false;
-                    a->teach_paused_at = a->sol_pos;
-                } else if (a->sol_pos < a->sol.n)
-                    app_step(a, 1);
-                else
-                    a->playing = false;
-            }
-            if (a->qhead == a->qtail) return;
-            a->anim = a->queue[a->qhead++ % QUEUE_MAX];
-            if (a->qhead == a->qtail) a->qhead = a->qtail = 0;
-            a->animating = true;
-            a->anim_t = 0;
-        }
-        float secs = a->anim.fast ? FAST_SECONDS : SPEED_SECONDS[a->speed];
-        if (MOVE_TURNS(a->anim.m) == 2) secs *= 1.5f;
-        if (secs > 0) {
-            a->anim_t += dt / secs;
-            if (a->anim_t < 1) return;
-        }
-        /* finished (instant speed finishes every queued move this frame) */
-        apply_queued(a, a->anim);
-        a->animating = false;
-        if (secs > 0) return;
-    }
-}
 
 static const struct {
     int key;
@@ -244,14 +155,11 @@ static void handle_keys(App *a) {
                 app_user_moves(a, &m, 1, false);
             }
     }
-    if (IsKeyPressed(KEY_SPACE) && a->has_sol) {
-        if (!a->playing && a->sol_pos == a->sol.n) app_jump(a, 0);
-        a->playing = !a->playing;
-    }
-    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) a->playing = false, app_step(a, 1);
-    if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) a->playing = false, app_step(a, -1);
-    if (IsKeyPressed(KEY_HOME)) a->playing = false, app_jump(a, 0);
-    if (IsKeyPressed(KEY_END)) a->playing = false, app_jump(a, a->sol.n);
+    if (IsKeyPressed(KEY_SPACE)) playback_toggle(&a->pb);
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) playback_step(&a->pb, 1);
+    if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) playback_step(&a->pb, -1);
+    if (IsKeyPressed(KEY_HOME)) playback_seek(&a->pb, 0);
+    if (IsKeyPressed(KEY_END)) playback_seek(&a->pb, INT_MAX);
     if (IsKeyPressed(KEY_ENTER) && !app_busy(a)) app_start_solve(a);
     if (ctrl && IsKeyPressed(KEY_S)) app_scramble(a);
     if (shift && IsKeyPressed(KEY_SLASH)) a->show_help = !a->show_help;
@@ -265,7 +173,11 @@ static void handle_view_mouse(App *a, Rectangle view) {
         if (a->edit_mode && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             int s = render_pick_sticker(a, view, mouse);
             if (s >= 0) {
-                if (s % 9 != 4) a->cube.f[s] = (uint8_t)a->paint_color;
+                if (s % 9 != 4) {
+                    Cube c = *playback_view(&a->pb).cube;
+                    c.f[s] = (uint8_t)a->paint_color;
+                    playback_set_cube(&a->pb, &c);
+                }
                 return;
             }
         }
@@ -362,19 +274,19 @@ static void unload_fonts(App *a) {
 static void screenshot_driver(App *a, const char *path, int frame) {
     if (frame == 2) {
         app_scramble(a);
-        app_flush(a);
+        playback_flush(&a->pb);
         app_start_solve(a);
     }
     static bool jumped;
-    if (a->has_sol && !jumped) {
+    PlaybackView v = playback_view(&a->pb);
+    if (v.sol && !jumped) {
         jumped = true;
-        app_jump(a, a->sol.n / 2);
-        a->playing = false;
-        app_step(a, 1);
+        playback_seek(&a->pb, v.sol->n / 2);
+        playback_step(&a->pb, 1);
         a->speed = 0;
+        v = playback_view(&a->pb);
     }
-    if (a->animating && a->anim_t > 0.35f) {
-        a->anim_t = 0.5f;
+    if (v.turning && v.turn_t > 0.35f) {
         TakeScreenshot(path);
         exit(0);
     }
@@ -385,7 +297,8 @@ int main(int argc, char **argv) {
     cubie_init();
     static App app;
     App *a = &app;
-    cube_reset(&a->cube);
+    playback_init(&a->pb);
+    playback_set_teach(&a->pb, a->teach);
     a->yaw = 0.62f;
     a->pitch = 0.5f;
     a->dist = 10.5f;
@@ -428,7 +341,7 @@ int main(int argc, char **argv) {
         handle_keys(a);
         handle_view_mouse(a, view);
         /* clamp: after an idle wait the frame time spans the whole pause */
-        update_animation(a, fminf(GetFrameTime(), 0.05f));
+        playback_tick(&a->pb, fminf(GetFrameTime(), 0.05f), SPEED_SECONDS[a->speed]);
 
         a->cursor = MOUSE_CURSOR_ARROW;
         BeginDrawing();
@@ -442,7 +355,7 @@ int main(int argc, char **argv) {
         ui_left_panel(a, left);
         ui_right_panel(a, right);
         /* sleep until input arrives unless something on screen is changing by itself */
-        if (a->animating || a->qhead != a->qtail || a->playing || a->input_focus || app_busy(a) || shot)
+        if (!playback_view(&a->pb).idle || a->input_focus || app_busy(a) || shot)
             DisableEventWaiting();
         else
             EnableEventWaiting();

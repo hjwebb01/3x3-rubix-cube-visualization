@@ -222,12 +222,12 @@ static float ease(float t) {
     return t * t * (3 - 2 * t);
 }
 
-static void push_layer_rotation(const App *a, const int pos[3]) {
+static void push_layer_rotation(const PlaybackView *v, const int pos[3]) {
     rlPushMatrix();
-    if (!a->animating || !move_affects(a->anim.m, pos)) return;
+    if (!v->turning || !move_affects(v->turn, pos)) return;
     int axis, mask, quarter;
-    move_geometry(a->anim.m, &axis, &mask, &quarter);
-    float angle = 90.0f * (float)quarter * ease(a->anim_t);
+    move_geometry(v->turn, &axis, &mask, &quarter);
+    float angle = 90.0f * (float)quarter * ease(v->turn_t);
     rlRotatef(angle, axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f);
 }
 
@@ -290,6 +290,7 @@ void render_cube3d(App *a, Rectangle view) {
     rlMultMatrixf(MatrixToFloat(look));
     rlEnableDepthTest();
 
+    PlaybackView v = playback_view(&a->pb);
     int hover = a->edit_mode ? render_pick_sticker(a, view, GetMousePosition()) : -1;
     if (hover >= 0 && hover % 9 != 4) a->cursor = MOUSE_CURSOR_POINTING_HAND;
 
@@ -298,7 +299,7 @@ void render_cube3d(App *a, Rectangle view) {
         for (int y = -1; y <= 1; y++)
             for (int z = -1; z <= 1; z++) {
                 int p[3] = {x, y, z};
-                push_layer_rotation(a, p);
+                push_layer_rotation(&v, p);
                 if (g_lit_ready)
                     draw_lit(g_body_mesh, MatrixTranslate((float)x, (float)y, (float)z), BODY_COLOR);
                 else
@@ -310,8 +311,8 @@ void render_cube3d(App *a, Rectangle view) {
     /* stickers */
     if (!g_lit_ready) rlDisableBackfaceCulling();
     for (int i = 0; i < NUM_FACELETS; i++) {
-        push_layer_rotation(a, g_ipos[i]);
-        Color col = STICKER_COLORS[a->cube.f[i]];
+        push_layer_rotation(&v, g_ipos[i]);
+        Color col = STICKER_COLORS[v.cube->f[i]];
         if (i == hover && i % 9 != 4) col = ColorBrightness(col, 0.25f);
         if (g_lit_ready)
             draw_lit(g_sticker_mesh, sticker_matrix(i), col);
@@ -361,6 +362,7 @@ void render_net(App *a, Rectangle area, int *hover_out) {
     float cell = fminf(area.width / 12.0f, area.height / 9.0f);
     float ox = area.x + (area.width - cell * 12) / 2, oy = area.y + (area.height - cell * 9) / 2;
     Vector2 mouse = GetMousePosition();
+    const Cube *cube = playback_view(&a->pb).cube;
     int hover = -1;
     for (int i = 0; i < NUM_FACELETS; i++) {
         int f = i / 9, r = i % 9 / 3, c = i % 3;
@@ -368,7 +370,7 @@ void render_net(App *a, Rectangle area, int *hover_out) {
         Rectangle inner = {rc.x + 1, rc.y + 1, rc.width - 2, rc.height - 2};
         bool over = CheckCollisionPointRec(mouse, rc);
         if (over) hover = i;
-        Color col = STICKER_COLORS[a->cube.f[i]];
+        Color col = STICKER_COLORS[cube->f[i]];
         DrawRectangleRec(rc, (Color){12, 12, 14, 255});
         DrawRectangleRounded(inner, 0.25f, 4, (a->edit_mode && over && r * 3 + c != 4) ? ColorBrightness(col, 0.25f) : col);
         if (i % 9 == 4) {
@@ -383,7 +385,11 @@ void render_net(App *a, Rectangle area, int *hover_out) {
     }
     if (a->edit_mode && hover >= 0 && hover % 9 != 4) {
         a->cursor = MOUSE_CURSOR_POINTING_HAND;
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) a->cube.f[hover] = (uint8_t)a->paint_color;
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            Cube c = *cube;
+            c.f[hover] = (uint8_t)a->paint_color;
+            playback_set_cube(&a->pb, &c);
+        }
     }
     if (hover_out) *hover_out = hover;
 }

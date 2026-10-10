@@ -4,20 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "check.h"
 #include "solvers/solvers.h"
 
-static int g_failures, g_checks;
+int g_failures, g_checks;
 
-#define CHECK(cond, ...)                                                       \
-    do {                                                                       \
-        g_checks++;                                                            \
-        if (!(cond)) {                                                         \
-            g_failures++;                                                      \
-            printf("  FAIL %s:%d: ", __FILE__, __LINE__);                      \
-            printf(__VA_ARGS__);                                               \
-            printf("\n");                                                      \
-        }                                                                      \
-    } while (0)
+void test_playback(void);
 
 static Cube apply_alg(const char *alg) {
     Cube c;
@@ -399,6 +391,7 @@ int main(int argc, char **argv) {
     test_cfop_tables();
     test_lessons();
     test_step_at();
+    test_playback();
     test_solvers(count);
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

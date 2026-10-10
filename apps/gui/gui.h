@@ -8,39 +8,18 @@
 
 #include "cube/cube.h"
 #include "cube/solver.h"
+#include "playback.h"
 
-#define QUEUE_MAX 4096
 #define NUM_SPEEDS 6
 
 typedef struct {
-    Move m;
-    bool fast; /* scramble moves animate quickly regardless of the speed setting */
-    int sol_dir; /* +1 solution move played forward, -1 undone, 0 anything else */
-} QueuedMove;
+    /* the cube on screen, its turn queue, and the Solution being played */
+    Playback pb;
 
-typedef struct {
-    /* cube shown on screen, not including the move currently animating */
-    Cube cube;
-
-    /* animation queue */
-    QueuedMove queue[QUEUE_MAX];
-    int qhead, qtail;
-    bool animating;
-    QueuedMove anim;
-    float anim_t; /* 0..1 */
-
-    /* solution playback: the logical state is sol_start + sol.moves[0..sol_pos) */
-    Solution sol;
-    bool has_sol;
-    Cube sol_start;
-    int sol_pos;  /* moves queued or applied: where the playhead is */
-    int done_pos; /* moves finished on screen: the next move to run is sol.moves[done_pos] */
-    bool playing;
     int speed; /* index into SPEED_SECONDS */
     SolverId method;     /* the selected method, used by the next Solve */
     SolverId sol_method; /* the method that produced the current solution */
-    bool teach;         /* pause playback at the start of each step */
-    int teach_paused_at; /* sol_pos of the last teach pause, so Play continues past it */
+    bool teach;          /* the Pause to explain checkbox; pushed to pb when it changes */
 
     /* background solver */
     pthread_t worker;
@@ -68,6 +47,7 @@ typedef struct {
     /* solution list: scroll position, follow-the-playhead, scrollbar drag, and the current step's move box */
     float sol_scroll;
     bool follow_current;
+    int follow_seen; /* Playhead last seen by the step list; a change re-enables follow_current */
     bool thumb_drag;
     float thumb_grab;
     float move_scroll;
@@ -97,9 +77,6 @@ void app_user_moves(App *a, const Move *m, int n, bool fast); /* clears any solu
 void app_scramble(App *a);
 void app_reset(App *a);
 void app_start_solve(App *a);
-void app_flush(App *a); /* finish all queued animation instantly */
-void app_step(App *a, int dir);
-void app_jump(App *a, int pos);
 void app_set_edit(App *a, bool on);
 bool app_busy(const App *a);
 

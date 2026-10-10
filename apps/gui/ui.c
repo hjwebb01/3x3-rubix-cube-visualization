@@ -217,25 +217,6 @@ static void move_meaning(Move m, char *out, size_t size) {
     }
 }
 
-/* Number of steps that have moves, and which of them step `cur` is. */
-static void step_counts(const Solution *s, int cur, int *k, int *total) {
-    *k = 0;
-    *total = 0;
-    for (int st = 0; st < s->nsteps; st++) {
-        if (!s->steps[st].count) continue;
-        (*total)++;
-        if (st <= cur) *k = *total;
-    }
-}
-
-/* The step the playhead is in: the last one that has started, or -1 before the first. */
-static int playhead_step(const App *a) {
-    int cur = -1;
-    for (int st = 0; st < a->sol.nsteps; st++)
-        if (a->sol.steps[st].count && a->sol_pos >= a->sol.steps[st].start) cur = st;
-    return cur;
-}
-
 /* ---------- top bar ---------- */
 
 void ui_top_bar(App *a, Rectangle r) {
@@ -252,7 +233,8 @@ void ui_top_bar(App *a, Rectangle r) {
     /* right side: the Keys button, then the solved badge when it applies */
     Rectangle keys = {r.x + r.width - PAD - 64, r.y + (r.height - 28) / 2, 64, 28};
     float right = keys.x - 12;
-    bool solved = cube_is_solved(&a->cube) && !a->animating && a->qhead == a->qtail && !a->edit_mode;
+    PlaybackView v = playback_view(&a->pb);
+    bool solved = cube_is_solved(v.cube) && !v.turning && v.idle && !a->edit_mode;
     if (solved) {
         float bw = ui_text_width_face(a, TYPE_MEDIUM, "Solved", 13) + 24;
         Rectangle badge = {right - bw, r.y + (r.height - 24) / 2, bw, 24};
@@ -375,7 +357,7 @@ void ui_left_panel(App *a, Rectangle r) {
     if (a->edit_mode) {
         if (ui_button(a, (Rectangle){x, y, half, 32}, "Done painting", true, true)) app_set_edit(a, false);
         if (ui_button(a, (Rectangle){x + half + 8, y, half, 32}, "Check cube", false, true)) {
-            const char *err = cube_validate(&a->cube);
+            const char *err = cube_validate(playback_view(&a->pb).cube);
             if (err)
                 app_set_status(a, true, "Invalid: %s", err);
             else
@@ -426,10 +408,14 @@ void ui_left_panel(App *a, Rectangle r) {
     y += 8;
     text_wrapped(a, summary, x, y, w, 13, UI_TERTIARY, true);
 
-    if (checkbox(a, (Rectangle){x, teach_y, w, 30}, "Pause to explain each step", a->teach)) a->teach = !a->teach;
-    const char *solve_label = busy ? "Solving..." : (a->has_sol ? "Solve again" : "Solve");
+    if (checkbox(a, (Rectangle){x, teach_y, w, 30}, "Pause to explain each step", a->teach)) {
+        a->teach = !a->teach;
+        playback_set_teach(&a->pb, a->teach);
+    }
+    bool has_sol = playback_view(&a->pb).sol != NULL;
+    const char *solve_label = busy ? "Solving..." : (has_sol ? "Solve again" : "Solve");
     if (ui_button(a, (Rectangle){x, solve_y, w, 44}, solve_label, !busy, !busy)) app_start_solve(a);
-    const char *helper = busy ? "" : (a->has_sol ? "Replaces the current solution." : "Solves the cube as it is now.");
+    const char *helper = busy ? "" : (has_sol ? "Replaces the current solution." : "Solves the cube as it is now.");
     ui_text(a, helper, x, solve_helper_y, 13, UI_TERTIARY);
 }
 
@@ -439,23 +425,24 @@ void ui_left_panel(App *a, Rectangle r) {
 void ui_move_display(App *a, Rectangle r) {
     Rectangle card = {r.x + 16, r.y + 6, r.width - 32, r.height - 12};
     box(card, 6, UI_PANEL, UI_RULE);
-    const Solution *s = &a->sol;
-    int n = a->has_sol ? s->n : 0;
+    PlaybackView v = playback_view(&a->pb);
+    const Solution *s = v.sol;
+    int n = s ? s->n : 0;
     float x = card.x + PAD, y = card.y + 10;
     float right_w = 150, right_x = card.x + card.width - PAD - right_w;
 
     char caption[64] = "", label[16] = "-", meaning[200] = "";
     Color glyph_c = UI_TEXT;
-    bool turning = a->animating;
+    bool turning = v.turning;
     if (turning) {
         snprintf(caption, sizeof caption, "TURNING NOW");
-        move_label(a, a->anim.m, label, sizeof label);
-        move_meaning(a->anim.m, meaning, sizeof meaning);
-    } else if (a->has_sol && a->done_pos < n) {
-        snprintf(caption, sizeof caption, "NEXT MOVE, %d OF %d", a->done_pos + 1, n);
-        move_label(a, s->moves[a->done_pos], label, sizeof label);
-        move_meaning(s->moves[a->done_pos], meaning, sizeof meaning);
-    } else if (a->has_sol) {
+        move_label(a, v.turn, label, sizeof label);
+        move_meaning(v.turn, meaning, sizeof meaning);
+    } else if (s && v.playhead < n) {
+        snprintf(caption, sizeof caption, "NEXT MOVE, %d OF %d", v.playhead + 1, n);
+        move_label(a, s->moves[v.playhead], label, sizeof label);
+        move_meaning(s->moves[v.playhead], meaning, sizeof meaning);
+    } else if (s) {
         snprintf(caption, sizeof caption, "SOLVED");
         snprintf(label, sizeof label, "Done");
         glyph_c = UI_DONE;
@@ -472,16 +459,16 @@ void ui_move_display(App *a, Rectangle r) {
     if (turning) DrawRectangle((int)x, (int)(gy + 62), (int)gw, 3, UI_ACCENT);
 
     float meaning_x = x + gw + 20;
-    float meaning_right = a->has_sol ? right_x - 20 : card.x + card.width - PAD;
+    float meaning_right = s ? right_x - 20 : card.x + card.width - PAD;
     if (meaning[0]) text_wrapped(a, meaning, meaning_x, gy + 4, meaning_right - meaning_x, 14, UI_SECONDARY, true);
 
-    if (a->has_sol) {
+    if (s) {
         char done[64], prev[16] = "", next[16] = "", nb[64] = "";
-        snprintf(done, sizeof done, "%d of %d", a->done_pos, n);
+        snprintf(done, sizeof done, "%d of %d", v.playhead, n);
         ui_text_face(a, TYPE_MEDIUM, "MOVES DONE", right_x, y, 13, UI_TERTIARY);
         ui_text_face(a, TYPE_MONO, done, right_x, y + 16, 22, UI_TEXT);
-        if (a->done_pos > 0) move_label(a, s->moves[a->done_pos - 1], prev, sizeof prev);
-        if (a->done_pos + 1 < n) move_label(a, s->moves[a->done_pos + 1], next, sizeof next);
+        if (v.playhead > 0) move_label(a, s->moves[v.playhead - 1], prev, sizeof prev);
+        if (v.playhead + 1 < n) move_label(a, s->moves[v.playhead + 1], next, sizeof next);
         /* only name the neighbours that exist */
         if (prev[0] && next[0]) snprintf(nb, sizeof nb, "Prev %s  Next %s", prev, next);
         else if (prev[0]) snprintf(nb, sizeof nb, "Prev %s", prev);
@@ -495,29 +482,25 @@ void ui_transport(App *a, Rectangle r) {
     Rectangle card = {r.x + 16, r.y + 6, r.width - 32, r.height - 12};
     box(card, 6, UI_PANEL, UI_RULE);
     float x = card.x + PAD, w = card.width - 2 * PAD, y = card.y + 12;
-    const Solution *s = &a->sol;
-    bool has = a->has_sol && s->n > 0;
+    PlaybackView v = playback_view(&a->pb);
+    const Solution *s = v.sol;
+    bool has = s != NULL;
 
     /* first row: where we are, and the move count */
     char count[64];
     if (has)
-        snprintf(count, sizeof count, "Move %d of %d", a->done_pos, s->n);
+        snprintf(count, sizeof count, "Move %d of %d", v.playhead, s->n);
     else
         snprintf(count, sizeof count, "No solution yet");
     float cw = ui_text_width_face(a, TYPE_MONO, count, 13);
     ui_text_face(a, TYPE_MONO, count, x + w - cw, y, 13, UI_TERTIARY);
     if (!has) {
         ui_text(a, "Press Solve to make a solution you can play back.", x, y, 13, UI_TERTIARY);
-    } else {
-        int cur = playhead_step(a);
-        if (cur >= 0) {
-            int k, total;
-            step_counts(s, cur, &k, &total);
-            char label[160];
-            snprintf(label, sizeof label, "Step %d of %d: %s", k, total, s->steps[cur].name);
-            fit_text(a, TYPE_REGULAR, 13, label, sizeof label, w - cw - 16);
-            ui_text(a, label, x, y, 13, UI_SECONDARY);
-        }
+    } else if (v.step.step >= 0) {
+        char label[160];
+        snprintf(label, sizeof label, "Step %d of %d: %s", v.step.k, v.step.total, s->steps[v.step.step].name);
+        fit_text(a, TYPE_REGULAR, 13, label, sizeof label, w - cw - 16);
+        ui_text(a, label, x, y, 13, UI_SECONDARY);
     }
 
     /* second row: progress, one segment per step that has moves */
@@ -541,14 +524,13 @@ void ui_transport(App *a, Rectangle r) {
         float sx = x;
         for (int i = 0; i < nseg; i++) {
             float sw = avail * (float)segs[i].count / (float)total;
-            float done = fminf(fmaxf((float)(a->done_pos - segs[i].start) / (float)segs[i].count, 0), 1);
+            float done = fminf(fmaxf((float)(v.playhead - segs[i].start) / (float)segs[i].count, 0), 1);
             box((Rectangle){sx, by, sw, 8}, 4, UI_RAISED, (Color){0});
             if (done > 0) DrawRectangleRounded((Rectangle){sx, by, sw * done, 8}, 1, 4, UI_ACCENT);
             if (scrub && (mouse.x < sx + sw + gap || i == nseg - 1)) {
                 float f = fminf(fmaxf((mouse.x - sx) / sw, 0), 1);
                 int pos = segs[i].start + (int)roundf(f * (float)segs[i].count);
-                a->playing = false;
-                if (pos != a->sol_pos) app_jump(a, pos);
+                playback_seek(&a->pb, pos);
                 scrub = false;
             }
             sx += sw + gap;
@@ -563,19 +545,16 @@ void ui_transport(App *a, Rectangle r) {
     float bx = x;
     for (int i = 0; i < 4; i++) {
         if (i == 2) {
-            if (ui_button(a, (Rectangle){bx, by2, play_w, 34}, a->playing ? "Pause" : "Play", a->playing, has)) {
-                if (!a->playing && a->sol_pos == s->n) app_jump(a, 0);
-                a->playing = !a->playing;
-            }
+            if (ui_button(a, (Rectangle){bx, by2, play_w, 34}, v.playing ? "Pause" : "Play", v.playing, has))
+                playback_toggle(&a->pb);
             bx += play_w + gap;
         }
         if (ui_button(a, (Rectangle){bx, by2, sb, 34}, labels[i], false, has)) {
-            a->playing = false;
             switch (i) {
-            case 0: app_jump(a, 0); break;
-            case 1: app_step(a, -1); break;
-            case 2: app_step(a, 1); break;
-            case 3: app_jump(a, s->n); break;
+            case 0: playback_seek(&a->pb, 0); break;
+            case 1: playback_step(&a->pb, -1); break;
+            case 2: playback_step(&a->pb, 1); break;
+            case 3: playback_seek(&a->pb, s->n); break;
             }
         }
         bx += sb + gap;
@@ -651,8 +630,9 @@ static int token_rows(App *a, const Solution *s, const SolveStep *step, float wi
     return rows;
 }
 
-static float place_tokens(App *a, const Solution *s, const SolveStep *step, Rectangle area, float scroll, bool draw,
+static float place_tokens(App *a, const PlaybackView *v, const SolveStep *step, Rectangle area, float scroll, bool draw,
                           Vector2 mouse) {
+    const Solution *s = v->sol;
     /* narrow the wrap width as far as the row count allows, so the last row is not a lone token */
     int rows = token_rows(a, s, step, area.width);
     if (rows > 1) {
@@ -673,8 +653,8 @@ static float place_tokens(App *a, const Solution *s, const SolveStep *step, Rect
         if (draw) {
             Rectangle tok = {tx, area.y + row * TOKEN_ROW - scroll, tw, TOKEN_H};
             bool hover = CheckCollisionPointRec(mouse, tok) && CheckCollisionPointRec(mouse, area);
-            bool next = j == a->done_pos; /* the move running now, or the next one to run */
-            bool played = j < a->done_pos;
+            bool next = j == v->playhead; /* the move running now, or the next one to run */
+            bool played = j < v->playhead;
             bool rot = move_is_rotation(s->moves[j]);
             Color fill = {0};
             Color tc = played ? UI_TEXT : UI_TERTIARY;
@@ -690,10 +670,7 @@ static float place_tokens(App *a, const Solution *s, const SolveStep *step, Rect
             if (fill.a) DrawRectangleRounded(tok, corner(tok, 6), 8, fill);
             ui_text_face(a, TYPE_MONO, name, tok.x + 8, tok.y + (TOKEN_H - 14) / 2, 14, tc);
             if (hover) a->cursor = MOUSE_CURSOR_POINTING_HAND;
-            if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                a->playing = false;
-                app_jump(a, j + 1);
-            }
+            if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) playback_seek(&a->pb, j + 1);
         }
         tx += tw + TOKEN_GAP;
     }
@@ -701,8 +678,8 @@ static float place_tokens(App *a, const Solution *s, const SolveStep *step, Rect
 }
 
 /* Lays out or draws every step row. Only the current step opens to its moves; the rest are one line each. */
-static void steps_pass(App *a, const Solution *s, int cur, Rectangle list, float x, float w, bool draw,
-                       StepsLayout *L) {
+static void steps_pass(App *a, const PlaybackView *v, Rectangle list, float x, float w, bool draw, StepsLayout *L) {
+    const Solution *s = v->sol;
     Vector2 mouse = GetMousePosition();
     bool over_list = CheckCollisionPointRec(mouse, list);
     float top = list.y - a->sol_scroll;
@@ -712,8 +689,8 @@ static void steps_pass(App *a, const Solution *s, int cur, Rectangle list, float
     L->inner_max = 0;
     for (int st = 0; st < s->nsteps; st++) {
         const SolveStep *step = &s->steps[st];
-        bool done = a->sol_pos >= step->start + step->count;
-        bool current = st == cur;
+        bool done = v->playhead >= step->start + step->count;
+        bool current = st == v->step.step;
         Rectangle row = {x, cy, w, ROW_H};
         bool over = over_list && CheckCollisionPointRec(mouse, row);
         if (current) L->cur_top = cy - top;
@@ -744,17 +721,14 @@ static void steps_pass(App *a, const Solution *s, int cur, Rectangle list, float
                 ui_text_face(a, TYPE_MEDIUM, "Go to start", x + w - cw, cy + (ROW_H - 13) / 2, 13, UI_ACCENT);
             else
                 ui_text_face(a, TYPE_MONO, count, x + w - cw, cy + (ROW_H - 13) / 2, 13, UI_TERTIARY);
-            if (over && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                a->playing = false;
-                app_jump(a, step->start);
-            }
+            if (over && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) playback_seek(&a->pb, step->start);
         }
         cy += ROW_H;
 
         if (current) {
             float tw = w - 24 - 10; /* leave room for the scroll thumb */
             Rectangle origin = {x + 24, cy, tw, 0};
-            float tok_h = place_tokens(a, s, step, origin, 0, false, mouse);
+            float tok_h = place_tokens(a, v, step, origin, 0, false, mouse);
             float inner_h = fminf(tok_h, TOKEN_ROWS_MAX * TOKEN_ROW);
             L->inner = (Rectangle){x + 24, cy, tw, inner_h};
             L->inner_max = fmaxf(0, tok_h - inner_h);
@@ -762,7 +736,7 @@ static void steps_pass(App *a, const Solution *s, int cur, Rectangle list, float
             if (a->move_scroll < 0) a->move_scroll = 0;
             if (draw && inner_h > 0) {
                 scissor(a, intersect(L->inner, list));
-                place_tokens(a, s, step, L->inner, a->move_scroll, true, mouse);
+                place_tokens(a, v, step, L->inner, a->move_scroll, true, mouse);
                 scissor(a, list);
                 if (L->inner_max > 0) {
                     float th = fmaxf(20, inner_h * inner_h / tok_h);
@@ -779,6 +753,22 @@ static void steps_pass(App *a, const Solution *s, int cur, Rectangle list, float
     L->content_h = cy - top;
 }
 
+/* The Skipped Steps folded into the current Step, each with its name and Lesson. Returns the height used;
+ * with draw false it only measures. */
+static float skipped_block(App *a, const Solution *s, const StepAt *at, float x, float y, float w, bool draw) {
+    float h = 0;
+    for (int i = at->skipped; i < at->skipped + at->nskipped; i++) {
+        char line[96];
+        snprintf(line, sizeof line, "Skipped: %s", s->steps[i].name);
+        fit_text(a, TYPE_MEDIUM, 13, line, sizeof line, w);
+        if (draw) ui_text_face(a, TYPE_MEDIUM, line, x, y + h, 13, UI_SECONDARY);
+        h += 18;
+        StepLesson lesson = step_lesson(&s->steps[i]);
+        if (lesson.text) h += text_wrapped(a, lesson.text, x, y + h, w, 13, UI_SECONDARY, draw) + 6;
+    }
+    return h;
+}
+
 /* Right panel: the solution summary, the current step's lesson, and the step list. */
 void ui_right_panel(App *a, Rectangle r) {
     DrawRectangleRec(r, UI_PANEL);
@@ -788,7 +778,8 @@ void ui_right_panel(App *a, Rectangle r) {
     ui_text_face(a, TYPE_SEMIBOLD, "Solution", x, y, 22, UI_TEXT);
     y += 34;
 
-    if (!a->has_sol) {
+    PlaybackView v = playback_view(&a->pb);
+    if (!v.sol) {
         y += text_wrapped(a, "Scramble the cube, or paint a state, choose a method and press Solve.", x, y, w, 14,
                           UI_SECONDARY, true) + 16;
         section(a, "METHODS", x, &y);
@@ -806,28 +797,27 @@ void ui_right_panel(App *a, Rectangle r) {
         return;
     }
 
-    const Solution *s = &a->sol;
+    const Solution *s = v.sol;
     char head[160];
     snprintf(head, sizeof head, "%s  \xC2\xB7  %d moves  \xC2\xB7  %.1f ms", solver_name(a->sol_method), s->n, s->ms);
     fit_text(a, TYPE_REGULAR, 13, head, sizeof head, w);
     ui_text(a, head, x, y, 13, UI_TERTIARY);
     y += 26;
 
-    /* the lesson for the step the playhead is in */
-    int cur = playhead_step(a);
+    /* the lesson for the step the playhead is in, after the Skipped Steps folded into it */
+    int cur = v.step.step;
     if (cur >= 0) {
         const SolveStep *st = &s->steps[cur];
         StepLesson lesson = step_lesson(st);
         float body_w = w - 24, body_h = 0;
+        float skip_h = skipped_block(a, s, &v.step, x + 12, 0, body_w, false);
         if (lesson.text) body_h += text_wrapped(a, lesson.text, x + 12, 0, body_w, 14, UI_TEXT, false) + 6;
         if (lesson.note) body_h += text_wrapped(a, lesson.note, x + 12, 0, body_w, 13, UI_SECONDARY, false);
-        Rectangle card = {x, y, w, 40 + body_h};
+        Rectangle card = {x, y, w, 40 + skip_h + body_h};
         box(card, 6, Fade(UI_ACCENT, 0.12f), Fade(UI_ACCENT, 0.45f));
 
-        int k, total;
-        step_counts(s, cur, &k, &total);
         char pos[32], title[96];
-        snprintf(pos, sizeof pos, "%d of %d", k, total);
+        snprintf(pos, sizeof pos, "%d of %d", v.step.k, v.step.total);
         float pw = ui_text_width_face(a, TYPE_MONO, pos, 13);
         snprintf(title, sizeof title, "%s", st->name);
         fit_text(a, TYPE_MEDIUM, 15, title, sizeof title, w - 24 - pw - 10);
@@ -835,6 +825,8 @@ void ui_right_panel(App *a, Rectangle r) {
         ui_text_face(a, TYPE_MONO, pos, x + w - 12 - pw, y + 12, 13, UI_TERTIARY);
 
         float by = y + 34;
+        skipped_block(a, s, &v.step, x + 12, by, body_w, true);
+        by += skip_h;
         if (lesson.text) by += text_wrapped(a, lesson.text, x + 12, by, body_w, 14, UI_TEXT, true) + 6;
         if (lesson.note) text_wrapped(a, lesson.note, x + 12, by, body_w, 13, UI_SECONDARY, true);
         y += card.height + 14;
@@ -848,8 +840,14 @@ void ui_right_panel(App *a, Rectangle r) {
 
     /* measure first: the wheel and the current-step follow need the layout */
     StepsLayout L;
-    steps_pass(a, s, cur, list, list_x, list_w, false, &L);
+    steps_pass(a, &v, list, list_x, list_w, false, &L);
     float max_scroll = fmaxf(0, L.content_h - list.height);
+
+    /* a move finishing on screen brings the current step back into view */
+    if (v.playhead != a->follow_seen) {
+        a->follow_seen = v.playhead;
+        a->follow_current = true;
+    }
 
     float wheel = CheckCollisionPointRec(mouse, list) ? GetMouseWheelMove() : 0;
     if (wheel != 0) {
@@ -888,7 +886,7 @@ void ui_right_panel(App *a, Rectangle r) {
     if (a->sol_scroll < 0) a->sol_scroll = 0;
 
     scissor(a, list);
-    steps_pass(a, s, cur, list, list_x, list_w, true, &L);
+    steps_pass(a, &v, list, list_x, list_w, true, &L);
     EndScissorMode();
 
     if (max_scroll > 0) {
