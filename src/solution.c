@@ -105,6 +105,52 @@ int solution_move_count(const Solution *s) {
     return n;
 }
 
+StepAt solution_step_at(const Solution *s, int pos) {
+    StepAt r = {.step = -1};
+    if (pos < 0) pos = 0;
+    if (pos > s->n) pos = s->n;
+    if (s->n == 0) return r;
+
+    int total = 0, last = -1;
+    for (int i = 0; i < s->nsteps; i++)
+        if (s->steps[i].count > 0) {
+            total++;
+            last = i;
+        }
+
+    int cur = -1;
+    if (pos == s->n) {
+        cur = last;
+    } else {
+        for (int i = 0; i < s->nsteps && cur < 0; i++) {
+            const SolveStep *st = &s->steps[i];
+            if (st->count > 0 && st->start <= pos && pos < st->start + st->count) cur = i;
+        }
+    }
+    if (cur < 0) return r;
+
+    r.step = cur;
+    r.total = total;
+    for (int i = 0; i <= cur; i++)
+        if (s->steps[i].count > 0) r.k++;
+
+    /* Skipped Steps before cur (back to the previous real Step), or after the
+     * last real Step when pos == n. */
+    if (pos < s->n) {
+        int first = cur;
+        while (first > 0 && s->steps[first - 1].count == 0) first--;
+        r.skipped = first;
+        r.nskipped = cur - first;
+    } else {
+        int end = cur + 1;
+        while (end < s->nsteps && s->steps[end].count == 0) end++;
+        r.skipped = cur + 1;
+        r.nskipped = end - (cur + 1);
+    }
+    if (r.nskipped == 0) r.skipped = 0;
+    return r;
+}
+
 static double now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

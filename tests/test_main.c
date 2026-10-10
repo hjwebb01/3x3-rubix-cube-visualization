@@ -242,6 +242,107 @@ static void test_lessons(void) {
     CHECK(!step_lesson(&none).text, "LESSON_NONE has text");
 }
 
+static void check_at(const Solution *s, int pos, int step, int k, int total, int skipped, int nskipped) {
+    StepAt a = solution_step_at(s, pos);
+    CHECK(a.step == step && a.k == k && a.total == total && a.skipped == skipped && a.nskipped == nskipped,
+          "pos %d: got step %d k %d/%d skipped %d+%d, want step %d k %d/%d skipped %d+%d", pos, a.step, a.k, a.total,
+          a.skipped, a.nskipped, step, k, total, skipped, nskipped);
+}
+
+static void test_step_at(void) {
+    static Solution s;
+
+    /* Plain: Cross [R U], F2L [F], PLL [L]. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_CROSS, "Cross");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    solution_begin_step(&s, LESSON_PLL, "PLL");
+    solution_push(&s, NULL, MOVE(MB_L, 1));
+    check_at(&s, 0, 0, 1, 3, 0, 0);
+    check_at(&s, 1, 0, 1, 3, 0, 0);
+    check_at(&s, 2, 1, 2, 3, 0, 0); /* boundary: the Step about to play */
+    check_at(&s, 3, 2, 3, 3, 0, 0);
+    check_at(&s, 4, 2, 3, 3, 0, 0); /* pos == n: last real Step */
+
+    /* Leading Skipped Step folds into the first real Step. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_OLL_SKIP, "OLL skip");
+    solution_begin_step(&s, LESSON_CROSS, "Cross");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    check_at(&s, 0, 1, 1, 2, 0, 1);
+    check_at(&s, 2, 2, 2, 2, 0, 0);
+    check_at(&s, 3, 2, 2, 2, 0, 0);
+
+    /* CFOP shape: F2L [R U], OLL skip (empty), PLL [F L]. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_OLL_SKIP, "OLL skip");
+    solution_begin_step(&s, LESSON_PLL, "PLL");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    solution_push(&s, NULL, MOVE(MB_L, 1));
+    check_at(&s, 0, 0, 1, 2, 0, 0);
+    check_at(&s, 1, 0, 1, 2, 0, 0);
+    check_at(&s, 2, 2, 2, 2, 1, 1); /* the skipped Step folds into PLL */
+    check_at(&s, 3, 2, 2, 2, 1, 1);
+    check_at(&s, 4, 2, 2, 2, 0, 0); /* pos == n: nothing trailing */
+
+    /* Thistlethwaite-like: two empty phases, then two real phases. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_1, "Phase 1");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_2, "Phase 2");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_3, "Phase 3");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_4, "Phase 4");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    check_at(&s, 0, 2, 1, 2, 0, 2); /* Phase 3 absorbs both empty phases */
+    check_at(&s, 1, 2, 1, 2, 0, 2);
+    check_at(&s, 2, 3, 2, 2, 0, 0);
+    check_at(&s, 3, 3, 2, 2, 0, 0);
+
+    /* Middle run of two empty phases between real ones. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_1, "Phase 1");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_2, "Phase 2");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_3, "Phase 3");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_4, "Phase 4");
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    check_at(&s, 0, 0, 1, 2, 0, 0);
+    check_at(&s, 1, 3, 2, 2, 1, 2);
+    check_at(&s, 2, 3, 2, 2, 0, 0); /* pos == n */
+
+    /* Trailing Skipped Step ("PLL skip") appears only at pos == n. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_CROSS, "Cross");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    solution_begin_step(&s, LESSON_PLL_SKIP, "PLL skip");
+    check_at(&s, 0, 0, 1, 2, 0, 0);
+    check_at(&s, 2, 1, 2, 2, 0, 0); /* n - 1 */
+    check_at(&s, 3, 1, 2, 2, 2, 1); /* pos == n */
+    /* Clamping: out-of-range positions behave like 0 and n. */
+    check_at(&s, -5, 0, 1, 2, 0, 0);
+    check_at(&s, 10, 1, 2, 2, 2, 1);
+
+    /* No moves at all: no current Step, even with Skipped Steps present. */
+    solution_clear(&s);
+    check_at(&s, 0, -1, 0, 0, 0, 0);
+    solution_begin_step(&s, LESSON_PLL_SKIP, "Solved");
+    check_at(&s, 0, -1, 0, 0, 0, 0);
+    check_at(&s, 5, -1, 0, 0, 0, 0);
+}
+
 static void test_solvers(int count) {
     for (int id = 0; id < SOLVER_COUNT; id++) {
         printf("solver %s (%d scrambles)\n", solver_name((SolverId)id), count);
@@ -297,6 +398,7 @@ int main(int argc, char **argv) {
     test_cubie();
     test_cfop_tables();
     test_lessons();
+    test_step_at();
     test_solvers(count);
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

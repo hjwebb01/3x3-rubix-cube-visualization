@@ -87,6 +87,17 @@ void solution_push_seq(Solution *s, Cube *c, const Move *seq, int n);
 int solution_move_count(const Solution *s);
 int solution_step_move_count(const Solution *s, int step);
 
+/* Where position pos (0..n, clamped) falls among the Steps. Skipped Steps (no
+ * moves) are never the current Step; they are folded into a neighbour, see
+ * GLOSSARY.md. */
+typedef struct {
+    int step;          /* index into steps[] of the Step with moves that pos is in; -1 if the Solution has no moves */
+    int k, total;      /* "Step k of total", counting only Steps with moves; 0, 0 when step == -1 */
+    int skipped;       /* Skipped Steps folded into this one: steps[skipped .. skipped + nskipped) */
+    int nskipped;
+} StepAt;
+StepAt solution_step_at(const Solution *s, int pos);
+
 /* Teaching notes for a step: the lesson for its kind (NULL for LESSON_NONE)
  * and its case note (usually NULL). */
 typedef struct {
