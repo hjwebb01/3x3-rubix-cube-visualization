@@ -34,23 +34,36 @@ void solution_clear(Solution *s) {
     s->ms = 0;
 }
 
-void solution_begin_step(Solution *s, const char *fmt, ...) {
+static void begin_step(Solution *s, LessonId lesson, const char *note, const char *fmt, va_list ap) {
     if (s->nsteps >= SOL_MAX_STEPS) {
         s->overflow = true;
         return;
     }
     SolveStep *st = &s->steps[s->nsteps++];
-    va_list ap;
-    va_start(ap, fmt);
     vsnprintf(st->name, sizeof st->name, fmt, ap);
-    va_end(ap);
+    st->lesson = lesson;
+    st->note = note;
     st->start = s->n;
     st->count = 0;
 }
 
+void solution_begin_step(Solution *s, LessonId lesson, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    begin_step(s, lesson, NULL, fmt, ap);
+    va_end(ap);
+}
+
+void solution_begin_step_note(Solution *s, LessonId lesson, const char *note, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    begin_step(s, lesson, note, fmt, ap);
+    va_end(ap);
+}
+
 void solution_push(Solution *s, Cube *c, Move m) {
     if (c) cube_apply(c, m);
-    if (s->nsteps == 0) solution_begin_step(s, "Solve");
+    if (s->nsteps == 0) solution_begin_step(s, LESSON_NONE, "Solve");
     SolveStep *st = &s->steps[s->nsteps - 1];
     if (st->count > 0) {
         Move last = s->moves[s->n - 1];

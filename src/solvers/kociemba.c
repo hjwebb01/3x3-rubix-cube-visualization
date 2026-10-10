@@ -343,9 +343,9 @@ const char *solve_kociemba(const Cube *c, Solution *s) {
         }
         if (i < n) cubie_apply(&t, moves[i]);
     }
-    solution_begin_step(s, "Phase 1: orient, slice edges (to G1)");
+    solution_begin_step(s, LESSON_KOCIEMBA_1, "Phase 1: orient, slice edges (to G1)");
     solution_push_seq(s, NULL, moves, split);
-    solution_begin_step(s, "Phase 2: solve in <U,D,R2,L2,F2,B2>");
+    solution_begin_step(s, LESSON_KOCIEMBA_2, "Phase 2: solve in <U,D,R2,L2,F2,B2>");
     solution_push_seq(s, NULL, moves + split, n - split);
     return NULL;
 }

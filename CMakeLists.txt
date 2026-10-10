@@ -17,6 +17,7 @@ add_library(cubecore STATIC
   src/cube.c
   src/cubie.c
   src/solution.c
+  src/lessons.c
   src/solvers/common.c
   src/solvers/beginner.c
   src/solvers/cfop.c

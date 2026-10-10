@@ -170,6 +170,9 @@ void ui_left_panel(App *a, Rectangle r) {
         if (ui_button(a, b, solver_name((SolverId)i), a->method == (SolverId)i, !busy)) a->method = (SolverId)i;
     }
     y += 80;
+    if (ui_button(a, (Rectangle){x, y, w, 30}, a->teach ? "Teach mode: on" : "Teach mode: off", a->teach, true))
+        a->teach = !a->teach;
+    y += 38;
     y += ui_text_wrapped(a, solver_description(a->method), x, y, w, 15, UI_DIM) + 8;
 
     if (ui_button(a, (Rectangle){x, y, w, 40}, busy ? "Solving..." : "Solve", !busy, !busy)) app_start_solve(a);
@@ -285,6 +288,25 @@ void ui_right_panel(App *a, Rectangle r) {
     snprintf(buf, sizeof buf, "Move %d / %d", a->sol_pos, s->n);
     ui_text(a, buf, x, y, 15, UI_DIM);
     y += 26;
+
+    /* lesson for the step about to be played (or just finished, at the end) */
+    int cur_step = -1;
+    for (int st = 0; st < s->nsteps; st++)
+        if (s->steps[st].count && a->sol_pos >= s->steps[st].start) cur_step = st;
+    StepLesson lesson = cur_step >= 0 ? step_lesson(&s->steps[cur_step]) : (StepLesson){0};
+    if (lesson.text || lesson.note) {
+        float lh = 0, nh = 0;
+        BeginScissorMode(0, 0, 0, 0); /* measure only */
+        if (lesson.text) lh = ui_text_wrapped(a, lesson.text, x + 10, y + 32, w - 20, 15, UI_TEXT);
+        if (lesson.note) nh = ui_text_wrapped(a, lesson.note, x + 10, y + 32, w - 20, 15, UI_DIM) + 8;
+        EndScissorMode();
+        Rectangle box = {x, y, w, lh + nh + 44};
+        DrawRectangleRounded(box, 0.08f, 6, Fade(UI_ACCENT, 0.12f));
+        ui_text(a, s->steps[cur_step].name, x + 10, y + 8, 17, UI_ACCENT);
+        if (lesson.text) ui_text_wrapped(a, lesson.text, x + 10, y + 32, w - 20, 15, UI_TEXT);
+        if (lesson.note) ui_text_wrapped(a, lesson.note, x + 10, y + 32 + lh + 8, w - 20, 15, UI_DIM);
+        y += box.height + 12;
+    }
 
     Rectangle list = {r.x, y, r.width, r.height - y - 8};
     Vector2 mouse = GetMousePosition();

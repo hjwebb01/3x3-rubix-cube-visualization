@@ -232,21 +232,21 @@ const char *solve_beginner(const Cube *in, Solution *s) {
     Cube c = *in;
     const char *err;
     if (cube_center(&c, FACE_D) != COLOR_WHITE) {
-        solution_begin_step(s, "Hold white on the bottom");
+        solution_begin_step(s, LESSON_HOLD_WHITE, "Hold white on the bottom");
         orient_white_down(&c, s);
     }
-    solution_begin_step(s, "White cross");
+    solution_begin_step(s, LESSON_WHITE_CROSS, "White cross");
     if ((err = white_cross(&c, s))) return err;
-    solution_begin_step(s, "White corners");
+    solution_begin_step(s, LESSON_WHITE_CORNERS, "White corners");
     if ((err = white_corners(&c, s))) return err;
-    solution_begin_step(s, "Middle layer edges");
+    solution_begin_step(s, LESSON_MIDDLE_EDGES, "Middle layer edges");
     if ((err = middle_layer(&c, s))) return err;
-    solution_begin_step(s, "Yellow cross");
+    solution_begin_step(s, LESSON_YELLOW_CROSS, "Yellow cross");
     if ((err = yellow_cross(&c, s))) return err;
-    solution_begin_step(s, "Yellow edges");
+    solution_begin_step(s, LESSON_YELLOW_EDGES, "Yellow edges");
     if ((err = yellow_edges(&c, s))) return err;
-    solution_begin_step(s, "Position yellow corners");
+    solution_begin_step(s, LESSON_POSITION_YELLOW_CORNERS, "Position yellow corners");
     if ((err = place_yellow_corners(&c, s))) return err;
-    solution_begin_step(s, "Orient yellow corners");
+    solution_begin_step(s, LESSON_ORIENT_YELLOW_CORNERS, "Orient yellow corners");
     return orient_yellow_corners(&c, s);
 }

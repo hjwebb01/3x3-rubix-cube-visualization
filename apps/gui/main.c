@@ -136,7 +136,8 @@ static void poll_solver(App *a) {
         a->has_sol = false;
         return;
     }
-    a->playing = true;
+    a->playing = !a->teach; /* in teach mode, read the first lesson before playing */
+    a->teach_paused_at = 0;
     app_set_status(a, false, "%s: %d moves in %.1f ms", solver_name(a->method), n, a->sol.ms);
 }
 
@@ -178,11 +179,20 @@ void app_set_edit(App *a, bool on) {
 
 /* ---------- per-frame update ---------- */
 
+static bool at_step_start(const App *a) {
+    for (int i = 1; i < a->sol.nsteps; i++)
+        if (a->sol.steps[i].count && a->sol.steps[i].start == a->sol_pos) return true;
+    return false;
+}
+
 static void update_animation(App *a, float dt) {
     for (int guard = 0; guard < 2 * SOL_MAX_MOVES + QUEUE_MAX; guard++) {
         if (!a->animating) {
             if (a->qhead == a->qtail && a->playing && a->has_sol) {
-                if (a->sol_pos < a->sol.n)
+                if (a->teach && a->sol_pos != a->teach_paused_at && at_step_start(a)) {
+                    a->playing = false;
+                    a->teach_paused_at = a->sol_pos;
+                } else if (a->sol_pos < a->sol.n)
                     app_step(a, 1);
                 else
                     a->playing = false;

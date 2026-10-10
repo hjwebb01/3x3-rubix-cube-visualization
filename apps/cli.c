@@ -47,6 +47,8 @@ static void print_net(const Cube *c, bool use_color) {
     }
 }
 
+static bool explain;
+
 static void print_solution(SolverId id, const Solution *s) {
     printf("\n== %s: %d moves, %.1f ms ==\n", solver_name(id), solution_move_count(s), s->ms);
     for (int i = 0; i < s->nsteps; i++) {
@@ -54,6 +56,11 @@ static void print_solution(SolverId id, const Solution *s) {
         char buf[2048];
         moves_format(s->moves + st->start, st->count, buf, sizeof buf);
         printf("  %-46s (%2d) %s\n", st->name, solution_step_move_count(s, i), st->count ? buf : "-");
+        if (!explain) continue;
+        StepLesson l = step_lesson(st);
+        if (l.text) printf("      %s\n", l.text);
+        if (l.note) printf("      %s\n", l.note);
+        if (l.text || l.note) printf("\n");
     }
 }
 
@@ -65,6 +72,7 @@ static void usage(const char *argv0) {
            "  -n, --length N        random scramble length (default 25)\n"
            "      --seed N          random seed\n"
            "      --bench N         solve N random scrambles per method and print statistics\n"
+           "  -e, --explain         explain each step and the algorithms it uses\n"
            "      --no-color        plain text cube net\n",
            argv0);
 }
@@ -129,6 +137,8 @@ int main(int argc, char **argv) {
             seed = (uint32_t)strtoul(v, NULL, 10), i++;
         } else if (!strcmp(a, "--bench") && v) {
             bench_n = atoi(v), i++;
+        } else if (!strcmp(a, "-e") || !strcmp(a, "--explain")) {
+            explain = true;
         } else if (!strcmp(a, "--no-color")) {
             color = false;
         } else {

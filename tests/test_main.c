@@ -233,6 +233,15 @@ static void test_cfop_tables(void) {
     }
 }
 
+static void test_lessons(void) {
+    for (int id = LESSON_NONE + 1; id < LESSON_COUNT; id++) {
+        SolveStep st = {.lesson = (LessonId)id};
+        CHECK(step_lesson(&st).text, "lesson %d has no text", id);
+    }
+    SolveStep none = {.lesson = LESSON_NONE};
+    CHECK(!step_lesson(&none).text, "LESSON_NONE has text");
+}
+
 static void test_solvers(int count) {
     for (int id = 0; id < SOLVER_COUNT; id++) {
         printf("solver %s (%d scrambles)\n", solver_name((SolverId)id), count);
@@ -259,6 +268,9 @@ static void test_solvers(int count) {
                 }
                 continue;
             }
+            for (int st = 0; st < s.nsteps; st++)
+                CHECK(step_lesson(&s.steps[st]).text, "%s step '%s' has no lesson", solver_name((SolverId)id),
+                      s.steps[st].name);
             int n = solution_move_count(&s);
             total += n;
             ms += s.ms;
@@ -284,6 +296,7 @@ int main(int argc, char **argv) {
     test_moves();
     test_cubie();
     test_cfop_tables();
+    test_lessons();
     test_solvers(count);
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

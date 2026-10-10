@@ -32,8 +32,11 @@ const NamedAlg OLL_ALGS[] = {
     {"OLL 23 (Headlights)", "R2 D' R U2 R' D R U2 R"},
     {"OLL 24 (Chameleon)", "r U R' U' r' F R F'"},
     {"OLL 25 (Bowtie)", "F' r U R' U' r' F R"},
-    {"OLL 26 (Antisune)", "R U2 R' U' R U' R'"},
-    {"OLL 27 (Sune)", "R U R' U R U2 R'"},
+    {"OLL 26 (Antisune)", "R U2 R' U' R U' R'",
+     "Antisune: the mirror of Sune. Hold the solved corner back-right, do R U2 R' U' R U' R'."},
+    {"OLL 27 (Sune)", "R U R' U R U2 R'",
+     "Sune: one yellow corner up, the other three twisted the same way. Hold the solved corner front-left, do "
+     "R U R' U R U2 R'. One of the most useful algs there is."},
     {"OLL 28", "r U R' U' r' R U R U' R'"},
     {"OLL 29", "R U R' U' R U' R' F' U' F R U R'"},
     {"OLL 30", "F R' F R2 U' R' U' R U R' F2"},

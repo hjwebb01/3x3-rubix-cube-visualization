@@ -61,6 +61,7 @@ bool macro_search(Cube *c, Solution *s, const Macro *macros, int nmacros, GoalFn
 typedef struct {
     const char *name;
     const char *alg;
+    const char *note; /* case note shown after the OLL/PLL lesson, or NULL */
 } NamedAlg;
 extern const NamedAlg OLL_ALGS[];
 extern const int NUM_OLL_ALGS;

@@ -28,6 +28,7 @@ If raylib (version 5 or later) is not installed, CMake downloads raylib 5.5 auto
 ./build/rubik -m cfop -s "R U R' U' F2 D"   # one method, given scramble
 ./build/rubik -f <54 chars URFDLB/WRGYOB>   # solve a facelet string
 ./build/rubik --bench 100                   # averages for every method
+./build/rubik -m beginner -e                # explain each step and its algorithm
 ```
 
 ## GUI
@@ -37,6 +38,7 @@ If raylib (version 5 or later) is not installed, CMake downloads raylib 5.5 auto
 ```
 
 - **Scramble / Reset**, pick a **method**, then **Solve**. The solver runs on a background thread.
+- **Learn:** a lesson box above the solution explains the current step: its goal, what to look for and the algorithm to memorize. Turn on **Teach mode** to pause at the start of every step so you can read it, then press Play to watch the moves.
 - **Playback:** play/pause, step, jump to the start or end, and set the speed (from slow to instant). Click any move or step in the solution list to jump there, or drag the progress bar.
 - **Keys:** `U R F D L B M E S X Y Z` turn the cube, and `Shift` makes the move prime. `Space` plays or pauses. The arrow keys step, and `Home`/`End` jump. `Enter` solves and `Ctrl+S` scrambles.
 - **Type moves:** you can enter any sequence in standard notation, including wide moves (`Rw`/`r`), slices, rotations and brackets.

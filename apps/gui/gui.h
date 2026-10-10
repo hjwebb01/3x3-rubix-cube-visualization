@@ -36,6 +36,8 @@ typedef struct {
     bool playing;
     int speed; /* index into SPEED_SECONDS */
     SolverId method;
+    bool teach;         /* pause playback at the start of each step */
+    int teach_paused_at; /* sol_pos of the last teach pause, so Play continues past it */
 
     /* background solver */
     pthread_t worker;

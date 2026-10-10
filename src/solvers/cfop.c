@@ -222,7 +222,7 @@ static const char *cfop_f2l(Cube *c, Solution *s) {
             }
         }
         if (best < 0) return "CFOP: F2L pair could not be solved";
-        solution_begin_step(s, "F2L %d: %s-%s", n + 1, COLOR_NAMES[cube_center(c, SLOT_FRONT[best])],
+        solution_begin_step(s, LESSON_F2L, "F2L %d: %s-%s", n + 1, COLOR_NAMES[cube_center(c, SLOT_FRONT[best])],
                             COLOR_NAMES[cube_center(c, SLOT_RIGHT[best])]);
         f2l_slot(c, s, best);
         done[best] = true;
@@ -242,7 +242,7 @@ static void push_u(Solution *s, Cube *c, int k) {
 bool cfop_oll(Cube *c, Solution *s) {
     cfop_init();
     if (ll_oriented(c)) {
-        solution_begin_step(s, "OLL skip");
+        solution_begin_step(s, LESSON_OLL_SKIP, "OLL skip");
         return true;
     }
     int best = -1, best_k = 0, best_len = 1 << 30;
@@ -260,7 +260,7 @@ bool cfop_oll(Cube *c, Solution *s) {
         }
     }
     if (best < 0) return false;
-    solution_begin_step(s, "%s", OLL_ALGS[best].name);
+    solution_begin_step_note(s, LESSON_OLL, OLL_ALGS[best].note, "%s", OLL_ALGS[best].name);
     push_u(s, c, best_k);
     solution_push_seq(s, c, oll_macros[best].m, oll_macros[best].n);
     return true;
@@ -269,14 +269,14 @@ bool cfop_oll(Cube *c, Solution *s) {
 bool cfop_pll(Cube *c, Solution *s) {
     cfop_init();
     if (cube_is_solved(c)) {
-        solution_begin_step(s, "PLL skip");
+        solution_begin_step(s, LESSON_PLL_SKIP, "PLL skip");
         return true;
     }
     for (int k = 1; k < 4; k++) {
         Cube t = *c;
         cube_apply(&t, MOVE(MB_U, k));
         if (cube_is_solved(&t)) {
-            solution_begin_step(s, "PLL skip (AUF)");
+            solution_begin_step(s, LESSON_PLL_SKIP, "PLL skip (AUF)");
             push_u(s, c, k);
             return true;
         }
@@ -300,7 +300,7 @@ bool cfop_pll(Cube *c, Solution *s) {
         }
     }
     if (best < 0) return false;
-    solution_begin_step(s, "%s", PLL_ALGS[best].name);
+    solution_begin_step_note(s, LESSON_PLL, PLL_ALGS[best].note, "%s", PLL_ALGS[best].name);
     push_u(s, c, best_pre);
     solution_push_seq(s, c, pll_macros[best].m, pll_macros[best].n);
     push_u(s, c, best_post);
@@ -324,10 +324,10 @@ const char *solve_cfop(const Cube *in, Solution *s) {
     Cube c = *in;
     const char *err;
     if (cube_center(&c, FACE_D) != COLOR_WHITE) {
-        solution_begin_step(s, "Inspection: white to bottom");
+        solution_begin_step(s, LESSON_INSPECTION, "Inspection: white to bottom");
         orient_white_down(&c, s);
     }
-    solution_begin_step(s, "Cross");
+    solution_begin_step(s, LESSON_CROSS, "Cross");
     if ((err = cfop_cross(&c, s))) return err;
     if ((err = cfop_f2l(&c, s))) return err;
     if (!cfop_oll(&c, s)) return "CFOP: OLL case not recognized";

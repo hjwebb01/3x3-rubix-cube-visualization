@@ -188,6 +188,9 @@ const char *solve_thistlethwaite(const Cube *c, Solution *s) {
         "Phase 3: slices, tetrads, parity (to half turns)",
         "Phase 4: solve with half turns",
     };
+    static const LessonId LESSONS[4] = {
+        LESSON_THISTLETHWAITE_1, LESSON_THISTLETHWAITE_2, LESSON_THISTLETHWAITE_3, LESSON_THISTLETHWAITE_4,
+    };
     CubieCube cc;
     const char *err = cubie_from_cube(c, &cc);
     if (err) return err;
@@ -195,7 +198,7 @@ const char *solve_thistlethwaite(const Cube *c, Solution *s) {
         Move moves[64];
         int n = solve_phase(&cc, phase, moves, 64);
         if (n < 0) return "Thistlethwaite: phase search failed";
-        solution_begin_step(s, "%s", NAMES[phase]);
+        solution_begin_step(s, LESSONS[phase], "%s", NAMES[phase]);
         for (int i = 0; i < n; i++) {
             cubie_apply(&cc, moves[i]);
             solution_push(s, NULL, moves[i]);
