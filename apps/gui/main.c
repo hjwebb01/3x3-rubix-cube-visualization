@@ -346,7 +346,7 @@ int main(int argc, char **argv) {
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(1360, 820, "Rubik's Cube Solver");
     SetWindowMinSize(960, 600);
-    SetTargetFPS(120);
+    SetTargetFPS(60);
     SetExitKey(KEY_NULL);
     load_font(a);
 
@@ -363,7 +363,8 @@ int main(int argc, char **argv) {
         poll_solver(a);
         handle_keys(a);
         handle_view_mouse(a, view);
-        update_animation(a, GetFrameTime());
+        /* clamp: after an idle wait the frame time spans the whole pause */
+        update_animation(a, fminf(GetFrameTime(), 0.05f));
 
         a->cursor = MOUSE_CURSOR_ARROW;
         BeginDrawing();
@@ -372,6 +373,11 @@ int main(int argc, char **argv) {
         ui_top_bar(a, top);
         ui_left_panel(a, left);
         ui_right_panel(a, right);
+        /* sleep until input arrives unless something on screen is changing by itself */
+        if (a->animating || a->qhead != a->qtail || a->playing || a->input_focus || app_busy(a) || shot)
+            DisableEventWaiting();
+        else
+            EnableEventWaiting();
         EndDrawing();
         /* always set an explicit cursor: the default (none) shows nothing under XWayland on Hyprland */
         if (a->cursor != cursor_shown) SetMouseCursor(cursor_shown = a->cursor);
