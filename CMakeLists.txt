@@ -59,4 +59,8 @@ if(RUBIKS_BUILD_GUI)
   add_executable(rubik_gui apps/gui/main.c apps/gui/render.c apps/gui/ui.c)
   target_compile_options(rubik_gui PRIVATE ${RUBIKS_WARNINGS})
   target_link_libraries(rubik_gui PRIVATE cubecore raylib Threads::Threads)
+  # the UI loads IBM Plex from fonts/ next to the executable
+  add_custom_command(TARGET rubik_gui POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_CURRENT_SOURCE_DIR}/apps/gui/fonts $<TARGET_FILE_DIR:rubik_gui>/fonts)
 endif()

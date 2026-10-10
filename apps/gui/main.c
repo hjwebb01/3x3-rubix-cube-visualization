@@ -16,6 +16,7 @@
 #include <time.h>
 
 #include "gui.h"
+#include "rlgl.h"
 #include "cube/cubie.h"
 
 const float SPEED_SECONDS[NUM_SPEEDS] = {0.8f, 0.45f, 0.25f, 0.14f, 0.07f, 0.0f};
@@ -41,16 +42,22 @@ void app_set_status(App *a, bool error, const char *fmt, ...) {
 
 bool app_busy(const App *a) { return atomic_load(&a->solving) != 0; }
 
-static void enqueue(App *a, Move m, bool fast) {
+static void enqueue(App *a, Move m, bool fast, int sol_dir) {
     if (a->qtail - a->qhead >= QUEUE_MAX) app_flush(a);
-    a->queue[a->qtail % QUEUE_MAX] = (QueuedMove){m, fast};
+    a->queue[a->qtail % QUEUE_MAX] = (QueuedMove){m, fast, sol_dir};
     a->qtail++;
 }
 
+/* A turn finishing on screen: the logical cube and the solution's done count move together. */
+static void apply_queued(App *a, QueuedMove q) {
+    cube_apply(&a->cube, q.m);
+    a->done_pos += q.sol_dir;
+}
+
 void app_flush(App *a) {
-    if (a->animating) cube_apply(&a->cube, a->anim.m);
+    if (a->animating) apply_queued(a, a->anim);
     a->animating = false;
-    for (; a->qhead < a->qtail; a->qhead++) cube_apply(&a->cube, a->queue[a->qhead % QUEUE_MAX].m);
+    for (; a->qhead < a->qtail; a->qhead++) apply_queued(a, a->queue[a->qhead % QUEUE_MAX]);
     a->qhead = a->qtail = 0;
 }
 
@@ -64,7 +71,7 @@ static void drop_solution(App *a) {
 void app_user_moves(App *a, const Move *m, int n, bool fast) {
     if (app_busy(a) || a->edit_mode) return;
     drop_solution(a);
-    for (int i = 0; i < n; i++) enqueue(a, m[i], fast);
+    for (int i = 0; i < n; i++) enqueue(a, m[i], fast, 0);
 }
 
 void app_scramble(App *a) {
@@ -127,10 +134,11 @@ static void poll_solver(App *a) {
     a->sol = a->solve_output;
     a->sol_start = a->cube;
     a->sol_pos = 0;
+    a->done_pos = 0;
+    a->sol_method = a->method;
     a->has_sol = true;
     a->sol_scroll = 0;
     a->follow_current = true;
-    int n = solution_move_count(&a->sol);
     if (a->sol.n == 0) {
         app_set_status(a, false, "Already solved");
         a->has_sol = false;
@@ -138,13 +146,13 @@ static void poll_solver(App *a) {
     }
     a->playing = !a->teach; /* in teach mode, read the first lesson before playing */
     a->teach_paused_at = 0;
-    app_set_status(a, false, "%s: %d moves in %.1f ms", solver_name(a->method), n, a->sol.ms);
+    app_set_status(a, false, "%s: %d moves in %.1f ms", solver_name(a->method), a->sol.n, a->sol.ms);
 }
 
 void app_step(App *a, int dir) {
     if (!a->has_sol) return;
-    if (dir > 0 && a->sol_pos < a->sol.n) enqueue(a, a->sol.moves[a->sol_pos++], false);
-    if (dir < 0 && a->sol_pos > 0) enqueue(a, move_inverse(a->sol.moves[--a->sol_pos]), false);
+    if (dir > 0 && a->sol_pos < a->sol.n) enqueue(a, a->sol.moves[a->sol_pos++], false, 1);
+    if (dir < 0 && a->sol_pos > 0) enqueue(a, move_inverse(a->sol.moves[--a->sol_pos]), false, -1);
     a->follow_current = true;
 }
 
@@ -157,6 +165,7 @@ void app_jump(App *a, int pos) {
     a->cube = a->sol_start;
     cube_apply_seq(&a->cube, a->sol.moves, pos);
     a->sol_pos = pos;
+    a->done_pos = pos;
     a->follow_current = true;
 }
 
@@ -210,7 +219,7 @@ static void update_animation(App *a, float dt) {
             if (a->anim_t < 1) return;
         }
         /* finished (instant speed finishes every queued move this frame) */
-        cube_apply(&a->cube, a->anim.m);
+        apply_queued(a, a->anim);
         a->animating = false;
         if (secs > 0) return;
     }
@@ -245,6 +254,8 @@ static void handle_keys(App *a) {
     if (IsKeyPressed(KEY_END)) a->playing = false, app_jump(a, a->sol.n);
     if (IsKeyPressed(KEY_ENTER) && !app_busy(a)) app_start_solve(a);
     if (ctrl && IsKeyPressed(KEY_S)) app_scramble(a);
+    if (shift && IsKeyPressed(KEY_SLASH)) a->show_help = !a->show_help;
+    if (IsKeyPressed(KEY_ESCAPE)) a->show_help = false;
 }
 
 static void handle_view_mouse(App *a, Rectangle view) {
@@ -283,29 +294,70 @@ static void handle_view_mouse(App *a, Rectangle view) {
     }
 }
 
-static void load_font(App *a) {
+/* Returns a zero Font if the file is missing or unreadable. */
+static Font load_font_file(const char *path, int size, int *cps, int ncps) {
+    if (!FileExists(path)) return (Font){0};
+    Font f = LoadFontEx(path, size, cps, ncps);
+    if (f.texture.id == 0) return (Font){0};
+    /* glyphs are rasterised large and drawn at 12-22 px; without mipmaps that minification aliases */
+    GenTextureMipmaps(&f.texture);
+    SetTextureFilter(f.texture, TEXTURE_FILTER_TRILINEAR);
+    return f;
+}
+
+/* IBM Plex is copied next to the executable by CMake (apps/gui/fonts). */
+static Font load_face(const char *dir, const char *file, int size, int *cps, int ncps) {
+    char path[512];
+    snprintf(path, sizeof path, "%sfonts/%s", dir, file);
+    return load_font_file(path, size, cps, ncps);
+}
+
+static void load_fonts(App *a) {
+    /* printable ASCII plus the marks the UI uses: middle dot, dashes, ellipsis, prime, minus */
+    static int cps[128];
+    int n = 0;
+    for (int c = 32; c < 127; c++) cps[n++] = c;
+    const int extra[] = {0xB7, 0x2013, 0x2014, 0x2026, 0x2032, 0x2212};
+    for (size_t i = 0; i < sizeof extra / sizeof extra[0]; i++) cps[n++] = extra[i];
+
+    const char *dir = GetApplicationDirectory();
+    a->font = load_face(dir, "IBMPlexSans-Regular.ttf", 48, cps, n);
+    a->font_medium = load_face(dir, "IBMPlexSans-Medium.ttf", 48, cps, n);
+    a->font_semibold = load_face(dir, "IBMPlexSans-SemiBold.ttf", 48, cps, n);
+    a->font_mono = load_face(dir, "IBMPlexMono-Medium.ttf", 96, cps, n);
+
+    /* fall back to a system font, then to raylib's default, so the UI still runs without the bundle */
     static const char *const CANDIDATES[] = {
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/TTF/Inter-Regular.ttf",
         "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
         "C:/Windows/Fonts/segoeui.ttf",
     };
-    a->font = GetFontDefault();
-    for (size_t i = 0; i < sizeof CANDIDATES / sizeof CANDIDATES[0]; i++) {
-        if (!FileExists(CANDIDATES[i])) continue;
-        Font f = LoadFontEx(CANDIDATES[i], 40, NULL, 0);
-        if (f.texture.id == 0) continue;
-        SetTextureFilter(f.texture, TEXTURE_FILTER_BILINEAR);
-        a->font = f;
-        return;
+    for (size_t i = 0; i < sizeof CANDIDATES / sizeof CANDIDATES[0] && !a->font.texture.id; i++)
+        a->font = load_font_file(CANDIDATES[i], 48, cps, n);
+    if (!a->font.texture.id) a->font = GetFontDefault();
+    if (!a->font_medium.texture.id) a->font_medium = a->font;
+    if (!a->font_semibold.texture.id) a->font_semibold = a->font;
+    if (!a->font_mono.texture.id) a->font_mono = a->font;
+
+    /* the mono face may lack U+2032; the UI then writes moves with a plain apostrophe */
+    int idx = GetGlyphIndex(a->font_mono, 0x2032);
+    a->prime_ok = a->font_mono.glyphs[idx].value == 0x2032;
+}
+
+static void unload_fonts(App *a) {
+    Font *fonts[4] = {&a->font, &a->font_medium, &a->font_semibold, &a->font_mono};
+    for (int i = 0; i < 4; i++) {
+        if (fonts[i]->texture.id == GetFontDefault().texture.id) continue;
+        bool dup = false;
+        for (int j = 0; j < i; j++) dup |= fonts[j]->texture.id == fonts[i]->texture.id;
+        if (!dup) UnloadFont(*fonts[i]);
     }
 }
 
-/* --screenshot PATH: scramble, solve, stop mid-turn halfway through the
+/* --screenshot PATH [W H]: scramble, solve, stop mid-turn halfway through the
  * solution, save a screenshot and exit (used to check rendering headlessly). */
 static void screenshot_driver(App *a, const char *path, int frame) {
     if (frame == 2) {
@@ -344,21 +396,33 @@ int main(int argc, char **argv) {
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     SetTraceLogLevel(LOG_WARNING);
-    InitWindow(1360, 820, "Rubik's Cube Solver");
+    /* --screenshot PATH [W H] also sets the window size, to check the small layout */
+    int w = shot && argc >= 5 ? atoi(argv[3]) : 1360, h = shot && argc >= 5 ? atoi(argv[4]) : 820;
+    InitWindow(w, h, "Rubik's Cube Solver");
     SetWindowMinSize(960, 600);
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
-    load_font(a);
+    load_fonts(a);
+    render_init();
 
     int cursor_shown = -1;
     for (int frame = 0; !WindowShouldClose(); frame++) {
         if (shot) screenshot_driver(a, shot, frame);
-        float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
-        float lw = fminf(fmaxf(W * 0.21f, 236), 290), rw = fminf(fmaxf(W * 0.24f, 240), 350);
+        /* scale the whole UI with the window, so a large window gets larger type instead of empty space */
+        float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+        a->ui_scale = fminf(fmaxf(fminf(sw / 1360, sh / 820), 1), 2);
+        SetMouseScale(1 / a->ui_scale, 1 / a->ui_scale);
+        float W = sw / a->ui_scale, H = sh / a->ui_scale;
+        /* three columns: setup and method on the left, the cube and playback in the middle, the solution on the right */
+        float lw = fminf(fmaxf(W * 0.21f, 236), 288), rw = fminf(fmaxf(W * 0.26f, 260), 372);
+        float top_h = 44;
+        float move_h = fminf(fmaxf(H * 0.16f, 104), 136), trans_h = fminf(fmaxf(H * 0.17f, 112), 128);
         Rectangle left = {0, 0, lw, H};
         Rectangle right = {W - rw, 0, rw, H};
-        Rectangle top = {left.width, 0, W - left.width - right.width, 52};
-        Rectangle view = {left.width, top.height, top.width, H - top.height};
+        Rectangle top = {lw, 0, W - lw - rw, top_h};
+        Rectangle transport = {lw, H - trans_h, top.width, trans_h};
+        Rectangle move = {lw, transport.y - move_h, top.width, move_h};
+        Rectangle view = {lw, top_h, top.width, move.y - top_h};
 
         poll_solver(a);
         handle_keys(a);
@@ -369,8 +433,12 @@ int main(int argc, char **argv) {
         a->cursor = MOUSE_CURSOR_ARROW;
         BeginDrawing();
         ClearBackground(UI_BG);
+        rlScalef(a->ui_scale, a->ui_scale, 1);
         render_cube3d(a, view);
         ui_top_bar(a, top);
+        ui_move_display(a, move);
+        ui_transport(a, transport);
+        ui_help_overlay(a, view);
         ui_left_panel(a, left);
         ui_right_panel(a, right);
         /* sleep until input arrives unless something on screen is changing by itself */
@@ -383,7 +451,8 @@ int main(int argc, char **argv) {
         if (a->cursor != cursor_shown) SetMouseCursor(cursor_shown = a->cursor);
     }
     if (app_busy(a)) pthread_join(a->worker, NULL);
-    if (a->font.texture.id != GetFontDefault().texture.id) UnloadFont(a->font);
+    unload_fonts(a);
+    render_shutdown();
     CloseWindow();
     return 0;
 }
