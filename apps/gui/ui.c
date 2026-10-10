@@ -711,7 +711,7 @@ static void steps_pass(App *a, const PlaybackView *v, Rectangle list, float x, f
 
             char name[96], count[16];
             snprintf(name, sizeof name, "%s", step->name);
-            snprintf(count, sizeof count, "%d", step->count);
+            snprintf(count, sizeof count, "%d", solution_step_move_count(s, st));
             float cw = ui_text_width_face(a, TYPE_MONO, count, 13);
             if (over && done) cw = ui_text_width_face(a, TYPE_MEDIUM, "Go to start", 13);
             fit_text(a, TYPE_REGULAR, 14, name, sizeof name, w - 24 - cw - 12);
@@ -798,8 +798,11 @@ void ui_right_panel(App *a, Rectangle r) {
     }
 
     const Solution *s = v.sol;
-    char head[160];
-    snprintf(head, sizeof head, "%s  \xC2\xB7  %d moves  \xC2\xB7  %.1f ms", solver_name(a->sol_method), s->n, s->ms);
+    int moves = solution_move_count(s), rot = s->n - moves;
+    char head[160], rots[48] = "";
+    if (rot > 0) snprintf(rots, sizeof rots, "  \xC2\xB7  %d %s", rot, rot == 1 ? "rotation" : "rotations");
+    snprintf(head, sizeof head, "%s  \xC2\xB7  %d moves%s  \xC2\xB7  %.1f ms", solver_name(a->sol_method), moves, rots,
+             s->ms);
     fit_text(a, TYPE_REGULAR, 13, head, sizeof head, w);
     ui_text(a, head, x, y, 13, UI_TERTIARY);
     y += 26;

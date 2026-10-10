@@ -114,7 +114,10 @@ static void poll_solver(App *a) {
     a->sol_scroll = 0;
     a->follow_current = true;
     a->follow_seen = 0;
-    app_set_status(a, false, "%s: %d moves in %.1f ms", solver_name(a->method), sol->n, sol->ms);
+    int moves = solution_move_count(sol), rot = sol->n - moves;
+    char rots[48] = "";
+    if (rot > 0) snprintf(rots, sizeof rots, " \xC2\xB7 %d %s", rot, rot == 1 ? "rotation" : "rotations");
+    app_set_status(a, false, "%s: %d moves%s in %.1f ms", solver_name(a->method), moves, rots, sol->ms);
 }
 
 void app_set_edit(App *a, bool on) {
