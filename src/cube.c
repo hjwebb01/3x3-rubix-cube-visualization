@@ -1,6 +1,7 @@
 #include "cube/cube.h"
 
 #include <ctype.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -28,7 +29,7 @@ static const char *const BASE_CHARS = "URFDLBMESxyzurfdlb";
 static uint8_t g_perm[NUM_MOVES][NUM_FACELETS]; /* new[j] = old[g_perm[m][j]] */
 static Move g_remap_y[4][NUM_MOVES];
 static char g_names[NUM_MOVES][4];
-static bool g_ready;
+static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 
 void facelet_geometry(int idx, int pos[3], int n[3]) {
     int face = idx / 9, r = (idx % 9) / 3, c = idx % 3;
@@ -75,8 +76,7 @@ bool move_affects(Move m, const int pos[3]) {
     return (s->mask >> (pos[s->axis] + 1)) & 1;
 }
 
-void cube_init(void) {
-    if (g_ready) return;
+static void cube_init_once(void) {
     for (int m = 0; m < NUM_MOVES; m++) {
         const BaseSpec *s = &BASE_SPEC[MOVE_BASE(m)];
         int q = ((s->dir * MOVE_TURNS(m)) % 4 + 4) % 4;
@@ -117,8 +117,9 @@ void cube_init(void) {
             }
         }
     }
-    g_ready = true;
 }
+
+void cube_init(void) { pthread_once(&g_once, cube_init_once); }
 
 void cube_reset(Cube *c) {
     for (int i = 0; i < NUM_FACELETS; i++) c->f[i] = (uint8_t)(i / 9);
@@ -261,4 +262,20 @@ void cube_to_string(const Cube *c, char out[NUM_FACELETS + 1]) {
     for (int f = 0; f < NUM_FACES; f++) by_color[cube_center(c, f)] = FACE_CHARS[f];
     for (int i = 0; i < NUM_FACELETS; i++) out[i] = by_color[c->f[i]];
     out[NUM_FACELETS] = '\0';
+}
+
+bool cube_orient(Cube *c, int front, int top) {
+    for (int x = 0; x < 4; x++)
+        for (int y = 0; y < 4; y++)
+            for (int z = 0; z < 4; z++) {
+                Cube candidate = *c;
+                if (x) cube_apply(&candidate, MOVE(MB_X, x));
+                if (y) cube_apply(&candidate, MOVE(MB_Y, y));
+                if (z) cube_apply(&candidate, MOVE(MB_Z, z));
+                if (cube_center(&candidate, FACE_F) == front && cube_center(&candidate, FACE_U) == top) {
+                    *c = candidate;
+                    return true;
+                }
+            }
+    return false;
 }

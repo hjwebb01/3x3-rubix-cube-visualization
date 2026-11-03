@@ -72,7 +72,7 @@ static const char *const LESSONS[LESSON_COUNT] = {
         "Pieces are moved into their orbits so that only half turns are needed to finish. This also fixes parity.",
     [LESSON_THISTLETHWAITE_4] = "Finish using only half turns (U2, R2, F2...).",
     [LESSON_KOCIEMBA_1] =
-        "Kociemba's two-phase algorithm is a computer method used to find near-optimal solutions (about 20 moves). "
+        "Kociemba's two-phase algorithm is a computer method used to find near-optimal solutions (about 18 moves). "
         "Phase 1 orients all pieces and puts the middle-slice edges in the middle slice.",
     [LESSON_KOCIEMBA_2] =
         "Phase 2 solves the rest using only U, D and half turns of the sides. A computer searches millions of "

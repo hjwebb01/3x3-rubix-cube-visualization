@@ -203,29 +203,42 @@ static bool f2l_slot(Cube *c, Solution *s, int slot) {
     return false;
 }
 
+/* Tries every order of the slots below the ones already solved; returns the fewest moves for the rest, or
+ * `best` if none beats it. order[] is filled for the winner. */
+static int f2l_order_dfs(const Cube *c, bool done[4], int depth, int len, int best, int order[4], int best_order[4]) {
+    if (depth == 4) {
+        memcpy(best_order, order, 4 * sizeof order[0]);
+        return len;
+    }
+    static Solution tmp[4]; /* one per depth: the recursion below reuses none of them */
+    for (int slot = 0; slot < 4; slot++) {
+        if (done[slot]) continue;
+        Cube t = *c;
+        solution_clear(&tmp[depth]);
+        if (!f2l_slot(&t, &tmp[depth], slot) || !cross_solved(&t)) continue;
+        bool kept = true;
+        for (int o = 0; o < 4; o++)
+            if (done[o] && !slot_solved(&t, o)) kept = false;
+        if (!kept || len + tmp[depth].n >= best) continue;
+        done[slot] = true;
+        order[depth] = slot;
+        best = f2l_order_dfs(&t, done, depth + 1, len + tmp[depth].n, best, order, best_order);
+        done[slot] = false;
+    }
+    return best;
+}
+
 static const char *cfop_f2l(Cube *c, Solution *s) {
     bool done[4] = {false};
+    int order[4], best_order[4];
+    if (f2l_order_dfs(c, done, 0, 0, 1 << 30, order, best_order) == 1 << 30) return "CFOP: F2L pair could not be solved";
     for (int n = 0; n < 4; n++) {
-        int best = -1, best_len = 1 << 30;
-        static Solution tmp;
-        for (int slot = 0; slot < 4; slot++) {
-            if (done[slot]) continue;
-            Cube t = *c;
-            solution_clear(&tmp);
-            if (!f2l_slot(&t, &tmp, slot) || !cross_solved(&t)) continue;
-            bool kept = true;
-            for (int o = 0; o < 4; o++)
-                if (done[o] && !slot_solved(&t, o)) kept = false;
-            if (kept && tmp.n < best_len) {
-                best = slot;
-                best_len = tmp.n;
-            }
-        }
-        if (best < 0) return "CFOP: F2L pair could not be solved";
-        solution_begin_step(s, LESSON_F2L, "F2L %d: %s-%s", n + 1, COLOR_NAMES[cube_center(c, SLOT_FRONT[best])],
-                            COLOR_NAMES[cube_center(c, SLOT_RIGHT[best])]);
-        f2l_slot(c, s, best);
-        done[best] = true;
+        int slot = best_order[n];
+        solution_begin_step(s, LESSON_F2L, "F2L %d: %s-%s", n + 1, COLOR_NAMES[cube_center(c, SLOT_FRONT[slot])],
+                            COLOR_NAMES[cube_center(c, SLOT_RIGHT[slot])]);
+        solution_set_focus(s, focus_slot_pair(cube_center(c, SLOT_FRONT[slot]), cube_center(c, SLOT_RIGHT[slot]),
+                                              cube_center(c, FACE_D)));
+        f2l_slot(c, s, slot);
     }
     return NULL;
 }

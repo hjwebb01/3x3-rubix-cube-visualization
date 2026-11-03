@@ -145,13 +145,6 @@ static void test_load(void) {
     for (int i = 0; i < 3; i++) cube_apply(&want, ABC_MOVES[i]);
     CHECK(cube_equal(v.cube, &want), "playback did not start from the cube on screen");
 
-    /* Teach on: paused at the start. */
-    playback_init(&pb);
-    playback_set_teach(&pb, true);
-    playback_load(&pb, &s);
-    v = playback_view(&pb);
-    CHECK(!v.playing && v.playhead == 0 && v.sol != NULL, "teach on: load should wait");
-
     /* Empty Solution: no Solution. */
     static Solution empty;
     solution_clear(&empty);
@@ -242,6 +235,23 @@ static void test_seek(void) {
     v = playback_view(&pb);
     Cube all = after(ABC_MOVES, 5);
     CHECK(v.playhead == 5 && cube_equal(v.cube, &all), "seek past the end was not clamped");
+}
+
+static void test_seek_step(void) {
+    printf("playback: seek by Step\n");
+    static Solution s;
+    build_skip(&s); /* A at 0, skipped Step at 2, B at 2 */
+    playback_init(&pb);
+    playback_load(&pb, &s);
+    playback_seek(&pb, 1);
+    playback_seek_step(&pb, 1);
+    CHECK(playback_view(&pb).playhead == 2, "next Step should land on B's start");
+    playback_seek_step(&pb, 1);
+    CHECK(playback_view(&pb).playhead == 4, "past the last Step should land on the end");
+    playback_seek_step(&pb, -1);
+    CHECK(playback_view(&pb).playhead == 2, "previous Step should land on B's start");
+    playback_seek_step(&pb, -1);
+    CHECK(playback_view(&pb).playhead == 0, "previous from B should land on A");
 }
 
 static void test_teach_pauses(void) {
@@ -352,6 +362,74 @@ static void test_overflow(void) {
     CHECK(cube_equal(v.cube, &want), "overflowing queue lost or reordered turns");
 }
 
+static void test_coach_transitions(void) {
+    printf("playback: coach demonstration, recovery and completion\n");
+    static Solution s;
+    build_skip(&s);
+    playback_init(&pb);
+    Cube start = fresh_cube();
+    for (int i = s.n - 1; i >= 0; i--) cube_apply(&start, move_inverse(s.moves[i]));
+    playback_set_cube(&pb, &start);
+    playback_coach_begin(&pb);
+    CHECK(!playback_coach_start(&pb), "coach started without a solution");
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+    PlaybackView v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_PRACTICE && v.coach.hidden && v.coach.step == 0, "practice must start hidden");
+    playback_coach_followed(&pb);
+    CHECK(!playback_view(&pb).coach.running, "followed hidden moves");
+    playback_coach_demo(&pb);
+    CHECK(playback_view(&pb).coach.running && !playback_view(&pb).coach.hidden, "demo did not reveal and run");
+    playback_tick(&pb, 1, 0);
+    v = playback_view(&pb);
+    CHECK(!v.coach.running && v.playhead == 0 && cube_equal(v.cube, &start), "demo did not rewind");
+    playback_coach_followed(&pb);
+    playback_tick(&pb, 1, 0);
+    v = playback_view(&pb);
+    CHECK(v.coach.step == 2 && v.playhead == 2 && v.coach.hidden, "did not skip empty step");
+    playback_coach_unsync(&pb, true);
+    v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_UNSYNCED && v.coach.attempted, "attempt not recorded");
+    playback_coach_restore(&pb);
+    v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_PRACTICE && v.playhead == 2 && v.coach.hidden, "restore did not return to step start");
+    playback_coach_show(&pb, true);
+    playback_coach_followed(&pb);
+    playback_tick(&pb, 1, 0);
+    v = playback_view(&pb);
+    Cube solved = fresh_cube();
+    CHECK(v.coach.mode == COACH_DONE && v.playhead == s.n && cube_equal(v.cube, &solved), "coach did not finish solved");
+}
+
+static void test_coach_repaint(void) {
+    printf("playback: coach repaint and re-solve\n");
+    static Solution s, replacement;
+    build_flat(&s);
+    playback_init(&pb);
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+    playback_coach_unsync(&pb, true);
+    playback_coach_repaint(&pb);
+    CHECK(playback_view(&pb).coach.mode == COACH_REPAINT && !playback_view(&pb).sol, "repaint retained old solution");
+    Cube painted = after(ABC_MOVES, 1);
+    playback_set_cube(&pb, &painted);
+    solution_clear(&replacement);
+    solution_begin_step(&replacement, LESSON_CROSS, "Re-solved");
+    solution_push(&replacement, NULL, move_inverse(ABC_MOVES[0]));
+    playback_coach_set_basis(&pb, COACH_BASIS_PAINTED);
+    playback_load(&pb, &replacement);
+    CHECK(playback_coach_start(&pb), "repainted solution did not start");
+    PlaybackView v = playback_view(&pb);
+    CHECK(v.coach.basis == COACH_BASIS_PAINTED && cube_equal(v.cube, &painted), "painted basis lost");
+    playback_coach_show(&pb, true);
+    playback_coach_followed(&pb);
+    playback_tick(&pb, 1, 0);
+    Cube solved = fresh_cube();
+    v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_DONE && cube_equal(v.cube, &solved), "repainted cube did not finish");
+}
+
 void test_playback(void) {
     test_user_turn();
     test_half_turn_slower();
@@ -362,10 +440,13 @@ void test_playback(void) {
     test_toggle_rewinds();
     test_step();
     test_seek();
+    test_seek_step();
     test_teach_pauses();
     test_teach_skipped_step();
     test_seek_then_play_in_teach();
     test_turn_and_set_cube_drop_solution();
     test_flush();
     test_overflow();
+    test_coach_transitions();
+    test_coach_repaint();
 }

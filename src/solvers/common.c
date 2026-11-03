@@ -73,7 +73,7 @@ int slot_of_face(int front_face) {
     return 0;
 }
 
-int alg_moves(const char *alg, int k, Move *out, int max) {
+static int alg_moves(const char *alg, int k, Move *out, int max) {
     int n = moves_parse(alg, out, max);
     if (n < 0) {
         fprintf(stderr, "bad algorithm in solver table: %s\n", alg);

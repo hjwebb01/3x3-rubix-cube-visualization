@@ -57,6 +57,8 @@ typedef uint8_t Move;
 void cube_init(void);
 
 void cube_reset(Cube *c);
+/* Reorient without changing the puzzle. Invalid front/top pairs leave c unchanged. */
+bool cube_orient(Cube *c, int front, int top);
 void cube_apply(Cube *c, Move m);
 void cube_apply_seq(Cube *c, const Move *seq, int n);
 bool cube_is_solved(const Cube *c); /* every face a single color (any orientation) */

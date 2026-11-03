@@ -11,11 +11,6 @@ const char *solve_cfop(const Cube *c, Solution *out);
 const char *solve_thistlethwaite(const Cube *c, Solution *out);
 const char *solve_kociemba(const Cube *c, Solution *out);
 
-/* Two-phase search on a cubie cube. Stops at the first solution of at most
- * `target` moves, or after `timeout_ms` with the best found so far. Returns the
- * length, or -1 if nothing was found. */
-int kociemba_search(const CubieCube *cc, int target, double timeout_ms, Move *out);
-
 /* ---- helpers shared by the human-style methods (common.c) ---- */
 
 /* F2L slots, indexed so that move_remap_y(alg, slot) performs an algorithm
@@ -41,7 +36,6 @@ int slot_of_face(int front_face); /* y-remap amount that makes front_face the fr
 /* Parses alg (aborts on a typo; algs are compile-time constants), remaps it by
  * y^k and pushes it. */
 void push_alg(Solution *s, Cube *c, const char *alg, int k);
-int alg_moves(const char *alg, int k, Move *out, int max);
 /* Puts the white center on D with a whole-cube rotation. */
 void orient_white_down(Cube *c, Solution *s);
 

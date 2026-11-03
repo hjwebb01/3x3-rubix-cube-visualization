@@ -2,7 +2,7 @@
 
 ## Summary
 
-Improve the existing raylib cube presentation with modestly beveled dark cubies, rounded sticker corners, and gentle diffuse lighting. The agreed visual direction is a clean physical cube with matte materials throughout and almost no shine, floating against the existing subtle gradient. Keep the current application layout, controls, camera interaction, animation, playback, sticker painting, and solver behavior. This document records the completed design interview; implementation and visual acceptance checks remain to be done. No visual prototype was requested or produced. The supporting API investigation is in [raylib-rendering-research.md](raylib-rendering-research.md); the matte finish chosen here supersedes its proposed satin/specular treatment.
+Improve the existing raylib cube presentation with modestly beveled dark cubies, rounded sticker corners, and gentle diffuse lighting. The agreed visual direction is a clean physical cube with matte materials throughout and almost no shine, floating against the existing subtle gradient. Keep the current application layout, controls, camera interaction, animation, playback, sticker painting, and solver behavior. This document records the completed design interview. The shader-lit, rounded-mesh renderer has since been implemented in `apps/gui/render.c`; the visual acceptance checks below have not been recorded as passed. The "Verified facts" section is the baseline observed before that implementation. No visual prototype was requested or produced. The supporting API investigation is in [raylib-rendering-research.md](raylib-rendering-research.md); the matte finish chosen here supersedes its proposed satin/specular treatment.
 
 ## Terms
 
@@ -37,13 +37,15 @@ These are routine implementation choices derived from the accepted direction and
 7. **Graphics state and ownership:** Keep lit mesh rendering within the custom 3D viewport. Flush pending batches at state boundaries and restore projection, modelview, viewport, depth, culling, and shader state before labels and controls. Explicitly own shared GPU resources, release each once before window shutdown, and avoid unloading a shared shader through every material. Provide a usable fallback if shader initialization fails.
 8. **Scope of code changes:** Most work belongs in `apps/gui/render.c`, with renderer initialization/shutdown hooks in `apps/gui/main.c` and declarations in `apps/gui/gui.h` as needed. Do not change cube or solver behavior to achieve the visual effect.
 
-## Verified facts
+## Verified baseline facts
 
-- `apps/gui/render.c` currently draws 27 dark `DrawCube` bodies and 54 flat sticker quads. The sticker drawing function does not emit normals. There are no custom lighting shaders or shadow passes in this renderer.
+These facts describe the pre-implementation baseline, except where noted.
+
+- Before implementation, `apps/gui/render.c` drew 27 dark `DrawCube` bodies and 54 flat sticker quads. The sticker drawing function did not emit normals. There were no custom lighting shaders or shadow passes in that renderer.
 - The renderer builds a perspective camera and custom viewport/projection, then restores state for 2D labels and controls. Camera orbit and zoom are handled in `apps/gui/main.c`.
 - Layer animation applies the current move to the logical cube when the visual turn completes. Entering sticker edit mode flushes queued animation first.
 - The current picking quads have half-width 0.5, larger than the visible stickers' half-width 0.41. Center stickers are protected from painting. The 2D net already has rounded sticker rectangles.
-- The application requests 4x MSAA, VSync, and a 120 FPS target. These are requested settings, not measured performance guarantees.
+- The application requests 4x MSAA, VSync, and (before implementation) a 120 FPS target; `apps/gui/main.c` now requests 60 FPS. These are requested settings, not measured performance guarantees.
 - CMake fetches raylib 5.5 if it does not find an installed raylib of at least 5.0. The inspected build uses the fetched raylib source; `build/compile_commands.json` confirms desktop OpenGL 3.3.
 - A baseline GUI screenshot was captured and visually inspected during the research. It showed the current flat colors and sharp geometry mid-turn. This verifies the baseline launch and appearance, not the proposed rendering changes.
 - The official [raylib 5.5 lighting example](https://github.com/raysan5/raylib/blob/5.5/examples/shaders/shaders_basic_lighting.c) demonstrates desktop GLSL 330 shader setup. [Raylib's mesh source](https://github.com/raysan5/raylib/blob/5.5/src/rmodels.c) supplies object and normal matrices and combines explicit mesh transforms with the current transform stack. The proposed first pass does not require a raylib upgrade.
@@ -77,4 +79,4 @@ No interview question was formally deferred. The following work is outside the a
 
 ## Open threads
 
-None. All four questions were answered, there were no unresolved discussion messages, and Hunter finished the interview. The next stage is implementation of this design followed by the verification above.
+None. All four questions were answered, there were no unresolved discussion messages, and Hunter finished the interview. Implementation exists; the verification above remains the acceptance checklist.
