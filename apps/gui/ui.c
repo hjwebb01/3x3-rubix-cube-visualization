@@ -357,11 +357,13 @@ void ui_top_bar(App *a, Rectangle r) {
     ui_text_face(a, TYPE_MEDIUM, speed, name_x + (76 - nw) / 2, y + 7, 14, UI_TEXT);
     if (ui_button(a, (Rectangle){plus_x, y, 28, 28}, "+", false, a->speed < NUM_SPEEDS - 1)) a->speed++;
     float slw = ui_text_width_face(a, TYPE_REGULAR, "Speed", 13);
-    if (minus_x - 8 - slw > x) {
+    const float STATUS_MIN = 300; /* the Speed label and Screen only give way before the status clips */
+    right = minus_x - 12;
+    if (minus_x - 8 - slw - 12 - x >= STATUS_MIN) {
         ui_text_face(a, TYPE_REGULAR, "Speed", minus_x - 8 - slw, y + 7, 13, UI_TERTIARY);
         right = minus_x - 8 - slw - 12;
         float so_w = ui_text_width_face(a, TYPE_MEDIUM, "Screen only", 13) + 24;
-        if (right - so_w > x) {
+        if (right - so_w - 12 - x >= STATUS_MIN) {
             Rectangle so = {right - so_w, y, so_w, 28};
             if (ui_button(a, so, "Screen only", a->screen_only, true)) app_toggle_screen_only(a);
             right = so.x - 12;
