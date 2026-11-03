@@ -209,6 +209,11 @@ void app_paint_sticker(App *a, int sticker) {
     playback_set_cube(&a->pb, &c);
 }
 
+void app_toggle_screen_only(App *a) {
+    a->screen_only = !a->screen_only;
+    a->focus = 0; /* the widget that had focus may be hidden now */
+}
+
 void app_set_edit(App *a, bool on) {
     if (on == a->edit_mode) return;
     if (on) {
@@ -317,6 +322,7 @@ static void handle_keys(App *a) {
     if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) playback_step(&a->pb, -1);
     if (IsKeyPressed(KEY_ESCAPE)) a->show_help = false;
     if (prompt) return;
+    if (IsKeyPressed(KEY_V) && !a->input[0] && !ctrl) app_toggle_screen_only(a);
     if (IsKeyPressed(KEY_MINUS) && a->speed > 0) a->speed--;
     if (IsKeyPressed(KEY_EQUAL) && a->speed < NUM_SPEEDS - 1) a->speed++;
     if (IsKeyPressed(KEY_HOME)) playback_seek(&a->pb, 0);
@@ -511,13 +517,15 @@ int main(int argc, char **argv) {
         SetMouseScale(1 / a->ui_scale, 1 / a->ui_scale);
         float W = sw / a->ui_scale, H = sh / a->ui_scale;
         /* the Seam: your cube's setup and Solution on the left half, the screen's cube on the right, the prompt below */
-        float lw = fminf(fmaxf(W * 0.21f, 236), 288), rw = fminf(fmaxf(W * 0.26f, 260), 372);
+        bool screen_only = a->screen_only;
+        float lw = screen_only ? 0 : fminf(fmaxf(W * 0.21f, 236), 288);
+        float rw = screen_only ? 0 : fminf(fmaxf(W * 0.26f, 260), 372);
         float top_h = 44, prompt_h = 64, body_h = H - prompt_h;
         float move_h = fminf(fmaxf(body_h * 0.16f, 104), 136);
         if (playback_view(&a->pb).coach.mode != COACH_OFF) {
             move_h = 270; /* the Coach card and its buttons */
         }
-        float seam_w = 16, cx = lw + rw + seam_w; /* where the screen half starts */
+        float seam_w = screen_only ? 0 : 16, cx = lw + rw + seam_w; /* where the screen half starts */
         Rectangle left = {0, 0, lw, body_h};
         Rectangle right = {lw, 0, rw, body_h};
         Rectangle top = {cx + 32, 0, W - cx - 32, top_h}; /* clear of the seam's label */
@@ -539,11 +547,11 @@ int main(int argc, char **argv) {
         rlScalef(a->ui_scale, a->ui_scale, 1);
         render_cube3d(a, view);
         /* drawn in Tab order: widgets take their Tab stops as they draw */
-        ui_left_panel(a, left);
+        if (!screen_only) ui_left_panel(a, left);
         ui_top_bar(a, top);
         ui_move_display(a, move);
-        ui_right_panel(a, right);
-        ui_seam(a, seam); /* after the panels and top bar: its label overlaps them */
+        if (!screen_only) ui_right_panel(a, right);
+        if (!screen_only) ui_seam(a, seam); /* after the panels and top bar: its label overlaps them */
         ui_prompt(a, prompt);
         ui_help_overlay(a, view);
         /* sleep until input arrives unless something on screen is changing by itself */

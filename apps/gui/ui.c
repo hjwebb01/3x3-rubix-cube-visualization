@@ -360,6 +360,12 @@ void ui_top_bar(App *a, Rectangle r) {
     if (minus_x - 8 - slw > x) {
         ui_text_face(a, TYPE_REGULAR, "Speed", minus_x - 8 - slw, y + 7, 13, UI_TERTIARY);
         right = minus_x - 8 - slw - 12;
+        float so_w = ui_text_width_face(a, TYPE_MEDIUM, "Screen only", 13) + 24;
+        if (right - so_w > x) {
+            Rectangle so = {right - so_w, y, so_w, 28};
+            if (ui_button(a, so, "Screen only", a->screen_only, true)) app_toggle_screen_only(a);
+            right = so.x - 12;
+        }
     }
     if (ui_button(a, keys, "Shortcuts", false, true)) a->show_help = !a->show_help;
 
@@ -572,7 +578,7 @@ void ui_seam(App *a, Rectangle r) {
             DrawLineEx((Vector2){r.x + r.width - 2, y + 8}, (Vector2){r.x + 2, y + 16}, 2, UI_DRIFT);
         snprintf(label, sizeof label, "TORN");
         edge = UI_DRIFT;
-    } else if (!v.sol) {
+    } else if (!v.sol && !v.sealed) {
         for (float y = r.y + 4; y < r.y + r.height; y += 20)
             DrawRectangle((int)(r.x + r.width / 2 - 1), (int)y, 2, 10, UI_BORDER);
         snprintf(label, sizeof label, "OPEN");
@@ -580,9 +586,9 @@ void ui_seam(App *a, Rectangle r) {
     } else {
         Rectangle track = {r.x + 4, r.y, r.width - 8, r.height};
         DrawRectangleRec(track, Fade(UI_ACCENT, 0.25f));
-        float frac = v.sol->n ? (float)v.playhead / v.sol->n : 1;
+        float frac = !v.sol ? 0 : v.sol->n ? (float)v.playhead / v.sol->n : 1;
         DrawRectangleRec((Rectangle){track.x, track.y, track.width, track.height * frac}, UI_ACCENT);
-        for (int i = 1; i < v.sol->nsteps; i++)
+        for (int i = 1; v.sol && i < v.sol->nsteps; i++)
             if (v.sol->steps[i].count && v.sol->n)
                 DrawRectangle((int)track.x, (int)(track.y + track.height * v.sol->steps[i].start / v.sol->n), (int)track.width, 2, UI_BG);
         snprintf(label, sizeof label, v.playhead == 0 ? "SEALED" : "IN SYNC");
@@ -682,10 +688,22 @@ void ui_left_panel(App *a, Rectangle r) {
             y += 42;
         }
     }
-    if (ui_button(a, (Rectangle){x, y, w, 32}, cv.mode == COACH_OFF ? "Coach me on my cube" : "Stop coaching", false,
-                  !busy))
-        app_coach_toggle(a);
-    y += 42;
+    PlaybackView seam = playback_view(&a->pb);
+    if (cv.mode == COACH_OFF && !seam.sol && !seam.sealed) {
+        /* the open seam: the two ways in. A scramble is handed out as a guided one, for the user's own cube */
+        if (ui_button(a, (Rectangle){x, y, w, 32}, "I have a cube", false, !busy)) app_coach_toggle(a);
+        y += 40;
+        if (ui_button(a, (Rectangle){x, y, w, 32}, "Give me a scramble", false, can_edit)) {
+            app_coach_toggle(a);
+            app_scramble(a);
+        }
+        y += 42;
+    } else {
+        if (ui_button(a, (Rectangle){x, y, w, 32}, cv.mode == COACH_OFF ? "Coach me on my cube" : "Stop coaching", false,
+                      !busy))
+            app_coach_toggle(a);
+        y += 42;
+    }
 
     /* the method block and Solve sit at the bottom; the net fills the gap above them */
     char summary[160];
@@ -990,6 +1008,7 @@ void ui_help_overlay(App *a, Rectangle view) {
     static const char *const lines[] = {
         "U R F D L B   turn a face (Shift = prime)",
         "M E S   turn a slice",
+        "V   screen only (hides the seam and panels)",
         "X Y Z   rotate the whole cube",
         "Enter   solve",
         "Space   play / pause",

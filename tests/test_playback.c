@@ -484,6 +484,21 @@ static void test_coach_paint_top(void) {
     CHECK(playback_coach_may_paint(&pb, FACE_R * 9 + 1), "full repaint kept the top-only lock");
 }
 
+static void test_scramble_seals(void) {
+    printf("playback: a scramble seals the seam; a user turn does not; replacing the cube unseals it\n");
+    playback_init(&pb);
+    Move f = MOVE(MB_F, 1);
+    playback_turn(&pb, &f, 1, false);
+    CHECK(!playback_view(&pb).sealed, "a user turn sealed the seam");
+    Move scr[2] = {MOVE(MB_R, 1), MOVE(MB_U, 1)};
+    playback_turn(&pb, scr, 2, true);
+    PlaybackView v = playback_view(&pb);
+    CHECK(v.sealed && v.sol == NULL && v.playhead == 0, "a scramble did not seal the seam at playhead 0");
+    Cube solved = fresh_cube();
+    playback_set_cube(&pb, &solved);
+    CHECK(!playback_view(&pb).sealed, "set_cube kept the seal");
+}
+
 void test_playback(void) {
     test_user_turn();
     test_half_turn_slower();
@@ -505,4 +520,5 @@ void test_playback(void) {
     test_coach_repaint();
     test_coach_trust();
     test_coach_paint_top();
+    test_scramble_seals();
 }

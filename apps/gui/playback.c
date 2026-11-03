@@ -117,6 +117,7 @@ PlaybackView playback_view(const Playback *pb) {
     } else {
         v.step.step = -1;
     }
+    v.sealed = pb->sealed;
     v.coach.mode = pb->coach;
     v.coach.basis = pb->coach_basis;
     v.coach.locked = coach_practising(pb);
@@ -157,6 +158,7 @@ void playback_turn(Playback *pb, const Move *m, int n, bool fast) {
     if (coach_practising(pb)) return; /* the physical cube is not turned on screen while coaching */
     playback_drop_solution(pb);
     for (int i = 0; i < n; i++) enqueue(pb, m[i], fast, 0);
+    if (fast) pb->sealed = true;
 }
 
 void playback_set_cube(Playback *pb, const Cube *c) {
@@ -164,6 +166,7 @@ void playback_set_cube(Playback *pb, const Cube *c) {
     pb->animating = false;
     pb->qhead = pb->qtail = 0;
     pb->transport = TRANSPORT_EMPTY;
+    pb->sealed = false;
     pb->cube = *c;
 }
 

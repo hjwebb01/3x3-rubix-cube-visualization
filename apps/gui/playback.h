@@ -71,6 +71,7 @@ typedef struct {
     Cube sol_start;
     int queued_pos; /* Solution moves queued or finished */
     int playhead;   /* Solution moves finished on screen */
+    bool sealed;    /* set by a scramble (fast turns), cleared by set_cube */
     bool teach;
     int teach_paused_at; /* the position not to Teach-pause at again: the last pause, or where Play was pressed */
     CoachMode coach;
@@ -88,6 +89,7 @@ typedef struct {
     const Solution *sol; /* NULL when there is no Solution */
     const Cube *sol_start; /* the cube sol starts from; NULL without a Solution */
     int playhead;        /* 0..sol->n; 0 without a Solution */
+    bool sealed;         /* a scramble made the cube and nothing has replaced it since: the seam is sealed without a Solution */
     bool playing;
     StepAt step;         /* solution_step_at(sol, playhead); step == -1 without a Solution */
     bool idle;           /* nothing turning, nothing queued, not playing, coach not moving the Playhead */
@@ -101,7 +103,7 @@ PlaybackView playback_view(const Playback *pb);
  * quarter turn; <= 0 means instant. */
 void playback_tick(Playback *pb, float dt, float turn_seconds);
 
-/* User turns (or a scramble when fast): drops any Solution, then queues the turns. */
+/* User turns (or a scramble when fast): drops any Solution, then queues the turns. A scramble seals the seam. */
 void playback_turn(Playback *pb, const Move *m, int n, bool fast);
 /* Replaces the cube (reset, sticker painting): drops any Solution and discards queued turns. */
 void playback_set_cube(Playback *pb, const Cube *c);

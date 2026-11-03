@@ -27,6 +27,7 @@ typedef struct {
     SolverId sol_method; /* the method that produced the current solution */
     bool teach;          /* the Pause to explain checkbox; pushed to pb when it changes */
     bool xray;           /* fade the stickers the current Step doesn't work on */
+    bool screen_only;    /* hides the seam and both side panels: the cube and the move card. Not kept across runs */
 
     /* background solver */
     pthread_t worker;
@@ -100,6 +101,7 @@ extern const Color STICKER_COLORS[NUM_COLORS];
 void app_set_status(App *a, bool error, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 void app_user_moves(App *a, const Move *m, int n, bool fast); /* clears any solution */
 void app_scramble(App *a);
+void app_toggle_screen_only(App *a);
 void app_reset(App *a);
 void app_orient(App *a, int front, int top);
 void app_undo(App *a); /* restores the cube the last Scramble or Reset replaced */
