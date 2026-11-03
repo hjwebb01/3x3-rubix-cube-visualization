@@ -21,6 +21,9 @@
 #include "rlgl.h"
 #include "cube/cubie.h"
 
+/* logical px: below this width the Seam stacks, so the window may now be narrower than the side-by-side layout */
+#define STACK_W 900
+
 const float SPEED_SECONDS[NUM_SPEEDS] = {0.8f, 0.45f, 0.25f, 0.14f, 0.07f, 0.0f};
 const char *const SPEED_NAMES[NUM_SPEEDS] = {"Slow", "Relaxed", "Normal", "Fast", "Very fast", "Instant"};
 const Color STICKER_COLORS[NUM_COLORS] = {
@@ -501,7 +504,7 @@ int main(int argc, char **argv) {
     /* --screenshot PATH [W H] also sets the window size, to check the small layout */
     int w = shot && argc >= 5 ? atoi(argv[3]) : 1360, h = shot && argc >= 5 ? atoi(argv[4]) : 820;
     InitWindow(w, h, "Rubik's Cube Solver");
-    SetWindowMinSize(960, 600);
+    SetWindowMinSize(600, 600); /* the stacked layout needs room; side-by-side is wider than STACK_W */
     if (shot) SetWindowMinSize(w, h), SetWindowMaxSize(w, h); /* a fixed size makes tiling WMs float it at W x H */
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
@@ -518,20 +521,26 @@ int main(int argc, char **argv) {
         float W = sw / a->ui_scale, H = sh / a->ui_scale;
         /* the Seam: your cube's setup and Solution on the left half, the screen's cube on the right, the prompt below */
         bool screen_only = a->screen_only;
-        float lw = screen_only ? 0 : fminf(fmaxf(W * 0.21f, 236), 288);
-        float rw = screen_only ? 0 : fminf(fmaxf(W * 0.26f, 260), 372);
+        /* narrower than STACK_W: the left half is a top band, the seam runs across, the screen half sits below */
+        bool stacked = !screen_only && W < STACK_W;
+        float lw = screen_only ? 0 : stacked ? W / 2 : fminf(fmaxf(W * 0.21f, 236), 288);
+        float rw = screen_only ? 0 : stacked ? W - lw : fminf(fmaxf(W * 0.26f, 260), 372);
         float top_h = 44, prompt_h = 64, body_h = H - prompt_h;
         float move_h = fminf(fmaxf(body_h * 0.16f, 104), 136);
         if (playback_view(&a->pb).coach.mode != COACH_OFF) {
             move_h = 270; /* the Coach card and its buttons */
         }
-        float seam_w = screen_only ? 0 : 16, cx = lw + rw + seam_w; /* where the screen half starts */
-        Rectangle left = {0, 0, lw, body_h};
-        Rectangle right = {lw, 0, rw, body_h};
-        Rectangle top = {cx + 32, 0, W - cx - 32, top_h}; /* clear of the seam's label */
+        float seam_w = screen_only ? 0 : stacked ? 24 : 16; /* stacked: thick enough for the seam's label */
+        /* height of the left half; stacked, it takes more than half so its bottom controls clear the method list */
+        float lh = stacked ? body_h * 0.56f : body_h;
+        float cx = stacked ? 0 : lw + rw + seam_w, cy = stacked ? lh + seam_w : 0; /* where the screen half starts */
+        float tx = stacked ? 0 : 32;                                              /* top bar clears the seam's label */
+        Rectangle left = {0, 0, lw, lh};
+        Rectangle right = {lw, 0, rw, lh};
+        Rectangle top = {cx + tx, cy, W - cx - tx, top_h};
         Rectangle move = {cx, body_h - move_h, W - cx, move_h};
-        Rectangle view = {cx, top_h, W - cx, move.y - top_h};
-        Rectangle seam = {lw + rw, 0, seam_w, body_h};
+        Rectangle view = {cx, cy + top_h, W - cx, move.y - cy - top_h};
+        Rectangle seam = stacked ? (Rectangle){0, lh, W, seam_w} : (Rectangle){lw + rw, 0, seam_w, body_h};
         Rectangle prompt = {0, body_h, W, prompt_h};
 
         poll_solver(a);

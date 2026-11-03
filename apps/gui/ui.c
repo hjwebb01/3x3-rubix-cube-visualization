@@ -576,45 +576,60 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     }
 }
 
+/* Rectangle `len` long along the seam from `s`, `thick` across it from `d`, both measured from r's edge. */
+static Rectangle seam_box(Rectangle r, bool across, float s, float len, float d, float thick) {
+    return across ? (Rectangle){r.x + s, r.y + d, len, thick} : (Rectangle){r.x + d, r.y + s, thick, len};
+}
+
+/* A point `s` along the seam and `d` across it from r's edge. */
+static Vector2 seam_pt(Rectangle r, bool across, float s, float d) {
+    return across ? (Vector2){r.x + s, r.y + d} : (Vector2){r.x + d, r.y + s};
+}
+
 /* The seam between your cube and the screen's: dashed while there is nothing to keep in sync, then a
- * track that fills with the Playhead and has a notch at each Step's start, torn while Coach is unsynced. */
+ * track that fills with the Playhead and has a notch at each Step's start, torn while Coach is unsynced.
+ * Stacked, the seam runs across the window: `along` is then x, and `across` is y. */
 void ui_seam(App *a, Rectangle r) {
     PlaybackView v = playback_view(&a->pb);
+    bool across = r.width > r.height;
+    float span = across ? r.width : r.height, t = across ? r.height : r.width; /* along and across the seam */
     /* the seam is the Playhead: drag it to scrub; playback_seek ignores it while a Step is practised */
     bool scrub = v.sol && !v.coach.locked && CheckCollisionPointRec(GetMousePosition(), r);
     if (scrub) a->cursor = MOUSE_CURSOR_POINTING_HAND;
     if (scrub && held(a, r)) {
-        float f = fminf(fmaxf((GetMousePosition().y - r.y) / r.height, 0), 1);
+        Vector2 m = GetMousePosition();
+        float f = fminf(fmaxf(((across ? m.x : m.y) - (across ? r.x : r.y)) / span, 0), 1);
         playback_seek(&a->pb, (int)roundf(f * (float)v.sol->n));
     }
     char label[32];
     Color edge;
     DrawRectangleRec(r, UI_BG);
     if (v.coach.mode == COACH_UNSYNCED) {
-        for (float y = r.y; y < r.y + r.height; y += 16) /* zigzag: the sync is torn */
-            DrawLineEx((Vector2){r.x + 2, y}, (Vector2){r.x + r.width - 2, y + 8}, 2, UI_DRIFT),
-            DrawLineEx((Vector2){r.x + r.width - 2, y + 8}, (Vector2){r.x + 2, y + 16}, 2, UI_DRIFT);
+        for (float s = 0; s < span; s += 16) { /* zigzag: the sync is torn */
+            DrawLineEx(seam_pt(r, across, s, 2), seam_pt(r, across, s + 8, t - 2), 2, UI_DRIFT);
+            DrawLineEx(seam_pt(r, across, s + 8, t - 2), seam_pt(r, across, s + 16, 2), 2, UI_DRIFT);
+        }
         snprintf(label, sizeof label, "TORN");
         edge = UI_DRIFT;
     } else if (!v.sol && !v.sealed) {
-        for (float y = r.y + 4; y < r.y + r.height; y += 20)
-            DrawRectangle((int)(r.x + r.width / 2 - 1), (int)y, 2, 10, UI_BORDER);
+        for (float s = 4; s < span; s += 20)
+            DrawRectangleRec(seam_box(r, across, s, 10, t / 2 - 1, 2), UI_BORDER);
         snprintf(label, sizeof label, "OPEN");
         edge = UI_BORDER;
     } else {
-        Rectangle track = {r.x + 4, r.y, r.width - 8, r.height};
+        Rectangle track = seam_box(r, across, 0, span, 4, t - 8);
         DrawRectangleRec(track, Fade(UI_ACCENT, 0.25f));
         float frac = !v.sol ? 0 : v.sol->n ? (float)v.playhead / v.sol->n : 1;
-        DrawRectangleRec((Rectangle){track.x, track.y, track.width, track.height * frac}, UI_ACCENT);
+        DrawRectangleRec(seam_box(r, across, 0, span * frac, 4, t - 8), UI_ACCENT);
         for (int i = 1; v.sol && i < v.sol->nsteps; i++)
             if (v.sol->steps[i].count && v.sol->n)
-                DrawRectangle((int)track.x, (int)(track.y + track.height * v.sol->steps[i].start / v.sol->n), (int)track.width, 2, UI_BG);
+                DrawRectangleRec(seam_box(r, across, span * v.sol->steps[i].start / v.sol->n, 2, 4, t - 8), UI_BG);
         snprintf(label, sizeof label, v.playhead == 0 ? "SEALED" : "IN SYNC");
         edge = UI_ACCENT;
     }
-    /* the label sits over the seam's top, wider than the strip */
+    /* the label sits over the seam's top, wider than the strip; stacked, it sits centred on the strip */
     float lw = ui_text_width_face(a, TYPE_MONO, label, 11) + 16;
-    Rectangle tag = {r.x + r.width / 2 - lw / 2, r.y + 10, lw, 22};
+    Rectangle tag = {r.x + r.width / 2 - lw / 2, across ? r.y + (r.height - 22) / 2 : r.y + 10, lw, 22};
     box(tag, 4, edge, edge);
     ui_text_face(a, TYPE_MONO, label, tag.x + 8, tag.y + 5, 11, UI_INK);
 }
