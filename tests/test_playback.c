@@ -430,6 +430,60 @@ static void test_coach_repaint(void) {
     CHECK(v.coach.mode == COACH_DONE && cube_equal(v.cube, &solved), "repainted cube did not finish");
 }
 
+static void test_coach_trust(void) {
+    printf("playback: coach trust applies the typed move and re-solves\n");
+    static Solution s, replacement;
+    build_flat(&s);
+    playback_init(&pb);
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+    Move typed = ABC_MOVES[1];
+    playback_coach_trust(&pb, &typed, 1);
+    CHECK(playback_view(&pb).coach.mode == COACH_PRACTICE, "trust outside UNSYNCED changed the state");
+    playback_coach_unsync(&pb, false);
+    playback_coach_trust(&pb, &typed, 1);
+    PlaybackView v = playback_view(&pb);
+    Cube typed_cube = after(&typed, 1);
+    CHECK(v.coach.mode == COACH_REPAINT && !v.sol, "trust did not drop the solution to re-solve");
+    CHECK(cube_equal(v.cube, &typed_cube), "trust did not apply the typed move to the model");
+    solution_clear(&replacement);
+    solution_begin_step(&replacement, LESSON_CROSS, "Re-solved");
+    solution_push(&replacement, NULL, move_inverse(typed));
+    playback_coach_set_basis(&pb, COACH_BASIS_PAINTED);
+    playback_load(&pb, &replacement);
+    CHECK(playback_coach_start(&pb), "re-solved practice did not start");
+    v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_PRACTICE && v.coach.step == 0 && v.playhead == 0, "practice did not continue from the re-solve");
+}
+
+static void test_coach_paint_top(void) {
+    printf("playback: coach paint top reopens only the top face\n");
+    static Solution s;
+    build_flat(&s);
+    playback_init(&pb);
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+    playback_coach_paint_top(&pb);
+    CHECK(playback_view(&pb).coach.mode == COACH_PRACTICE, "paint top outside UNSYNCED changed the state");
+    playback_coach_unsync(&pb, false);
+    playback_coach_paint_top(&pb);
+    CHECK(playback_view(&pb).coach.mode == COACH_REPAINT && !playback_view(&pb).sol, "paint top did not reopen for painting");
+    CHECK(playback_coach_may_paint(&pb, FACE_U * 9 + 1), "top face locked");
+    CHECK(!playback_coach_may_paint(&pb, FACE_R * 9 + 1), "other face unlocked by paint top");
+    CHECK(!playback_coach_may_paint(&pb, FACE_L * 9 + 7), "other face unlocked by paint top");
+    playback_coach_unsync(&pb, false); /* REPAINT is not PRACTICE: this must not leave it */
+    CHECK(playback_view(&pb).coach.mode == COACH_REPAINT, "unsync left repaint");
+    playback_coach_end(&pb);
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not restart");
+    playback_coach_unsync(&pb, false);
+    playback_coach_repaint(&pb);
+    CHECK(playback_coach_may_paint(&pb, FACE_R * 9 + 1), "full repaint kept the top-only lock");
+}
+
 void test_playback(void) {
     test_user_turn();
     test_half_turn_slower();
@@ -449,4 +503,6 @@ void test_playback(void) {
     test_overflow();
     test_coach_transitions();
     test_coach_repaint();
+    test_coach_trust();
+    test_coach_paint_top();
 }

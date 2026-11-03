@@ -296,4 +296,21 @@ void playback_coach_repaint(Playback *pb) {
     if (!coach_practising(pb) || coach_running(pb)) return;
     playback_drop_solution(pb); /* forgets the practice */
     pb->coach = COACH_REPAINT;
+    pb->coach_top = false;
+}
+
+void playback_coach_trust(Playback *pb, const Move *m, int n) {
+    if (pb->coach != COACH_UNSYNCED) return;
+    playback_coach_repaint(pb); /* the typed moves change the cube, so the Solution is re-planned */
+    cube_apply_seq(&pb->cube, m, n);
+}
+
+void playback_coach_paint_top(Playback *pb) {
+    if (pb->coach != COACH_UNSYNCED) return;
+    playback_coach_repaint(pb);
+    pb->coach_top = true;
+}
+
+bool playback_coach_may_paint(const Playback *pb, int sticker) {
+    return !(pb->coach == COACH_REPAINT && pb->coach_top) || sticker / 9 == FACE_U;
 }

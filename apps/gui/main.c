@@ -201,6 +201,8 @@ static void poll_solver(App *a) {
 
 void app_paint_sticker(App *a, int sticker) {
     if (sticker % 9 == 4) return; /* centers fix the color scheme */
+    /* shortcut: the other faces still look paintable (hover, focus) under paint top, upgrade: dim them in render.c */
+    if (!playback_coach_may_paint(&a->pb, sticker)) return;
     Cube c = *playback_view(&a->pb).cube;
     c.f[sticker] = (uint8_t)a->paint_color;
     a->can_undo = false;
@@ -272,6 +274,20 @@ void app_coach_repaint(App *a) {
     playback_coach_repaint(&a->pb);
     app_set_edit(a, true);
     app_set_status(a, false, "Paint your physical cube as it is, then press Solve");
+}
+
+/* trust: the typed moves are the truth, so the solver plans again from the cube they leave. */
+void app_coach_trust(App *a, const Move *m, int n) {
+    if (app_busy(a)) return;
+    playback_coach_trust(&a->pb, m, n);
+    app_start_solve(a);
+}
+
+void app_coach_paint_top(App *a) {
+    if (app_busy(a)) return;
+    playback_coach_paint_top(&a->pb);
+    app_set_edit(a, true);
+    app_set_status(a, false, "Paint the top face, then press Solve");
 }
 
 /* ---------- per-frame update ---------- */

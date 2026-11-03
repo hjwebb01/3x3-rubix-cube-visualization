@@ -433,6 +433,33 @@ static bool method_row(App *a, Rectangle r, SolverId id, bool enabled) {
     return key || (enabled && ui_clicked(a, r));
 }
 
+/* The commands that settle a torn seam: fix, trust MOVES, paint top. Only while Coach is unsynced; the rest of
+ * the text after the word is the typed moves. Returns false when the words are not one of them. */
+static bool coach_command(App *a, const char *w, const char *rest) {
+    if (playback_view(&a->pb).coach.mode != COACH_UNSYNCED) return false;
+    if (!strcmp(w, "fix")) {
+        app_coach_restore(a);
+        app_set_status(a, false, "Undid your move: back at the step start");
+        return true;
+    }
+    if (!strcmp(w, "paint")) {
+        char top[8];
+        if (sscanf(rest, " %7s", top) != 1) return false;
+        for (char *c = top; *c; c++) *c = (char)tolower((unsigned char)*c);
+        if (strcmp(top, "top") != 0) return false;
+        app_coach_paint_top(a);
+        return true;
+    }
+    if (!strcmp(w, "trust")) {
+        Move mv[256];
+        int n = moves_parse(rest, mv, 256);
+        if (n <= 0) return false; /* no move typed: the usual "Unable to read" tells the user */
+        app_coach_trust(a, mv, n);
+        return true;
+    }
+    return false;
+}
+
 /* Words the prompt takes in place of moves. Returns false when text is not one of them. */
 static bool prompt_command(App *a, const char *text) {
     static const struct {
@@ -441,8 +468,10 @@ static bool prompt_command(App *a, const char *text) {
     } WORDS[] = {{"teach", SOLVER_BEGINNER}, {"faster", SOLVER_CFOP}, {"show", SOLVER_KOCIEMBA},
                  {"solve", -1}, {"scramble", -1}, {"reset", -1}, {"undo", -1}, {"xray", -1}, {"help", -1}};
     char w[16];
-    if (sscanf(text, " %15s", w) != 1) return false;
+    int used = 0;
+    if (sscanf(text, " %15s%n", w, &used) != 1) return false;
     for (char *c = w; *c; c++) *c = (char)tolower((unsigned char)*c);
+    if (coach_command(a, w, text + used)) return true;
     for (size_t i = 0; i < sizeof WORDS / sizeof WORDS[0]; i++) {
         if (strcmp(w, WORDS[i].word)) continue;
         if (WORDS[i].method >= 0) a->method = (SolverId)WORDS[i].method;

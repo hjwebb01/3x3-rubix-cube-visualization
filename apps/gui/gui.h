@@ -118,6 +118,8 @@ void app_coach_followed(App *a);
 void app_coach_unsync(App *a, bool attempted);
 void app_coach_restore(App *a);
 void app_coach_repaint(App *a);
+void app_coach_trust(App *a, const Move *m, int n); /* the typed moves become the truth; Solve again from there */
+void app_coach_paint_top(App *a);                  /* paint the U face only, the rest stays locked */
 
 /* render.c */
 void render_init(void); /* after InitWindow */

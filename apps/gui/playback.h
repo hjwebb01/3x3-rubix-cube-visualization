@@ -77,6 +77,7 @@ typedef struct {
     CoachBasis coach_basis;
     CoachStep coach_sub;
     int coach_step;   /* sol.steps index of the Step practised, -1 outside PRACTICE */
+    bool coach_top;   /* REPAINT from paint top: only the U face may be painted */
 } Playback;
 
 typedef struct {
@@ -150,5 +151,12 @@ void playback_coach_restore(Playback *pb);
 /* PRACTICE or UNSYNCED -> REPAINT: drops the Solution, so the user paints the physical
  * cube and then Solve checks it and solves afresh. */
 void playback_coach_repaint(Playback *pb);
+/* UNSYNCED -> REPAINT: the typed moves are the truth, applied to the screen cube. The
+ * Solution is dropped, so Solve re-plans from there. Does nothing outside UNSYNCED. */
+void playback_coach_trust(Playback *pb, const Move *m, int n);
+/* UNSYNCED -> REPAINT for the U face only: the other faces stay as the screen shows them. */
+void playback_coach_paint_top(Playback *pb);
+/* False only for a sticker off the U face while paint top is in force. */
+bool playback_coach_may_paint(const Playback *pb, int sticker);
 
 #endif
