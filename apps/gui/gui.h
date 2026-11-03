@@ -49,6 +49,7 @@ typedef struct {
     /* sticker editing */
     bool edit_mode;
     int paint_color;
+    int typed_face; /* the face the prompt fills next while painting, in URFDLB order */
 
     /* coach: the last guided scramble and the cube it makes; read it through app_guided_scramble */
     char coach_scramble[256];
@@ -108,6 +109,8 @@ void app_undo(App *a); /* restores the cube the last Scramble or Reset replaced 
 void app_start_solve(App *a);
 void app_set_edit(App *a, bool on);
 void app_paint_sticker(App *a, int sticker); /* paint_color onto one sticker; centers are left alone */
+bool app_type_face(App *a, const char *letters); /* nine colors onto the next face; Check cube after the last */
+void app_check_cube(App *a);
 bool app_busy(const App *a);
 bool app_can_change_cube(const App *a); /* Scramble, Reset, Undo, paint, Solve */
 bool app_can_turn(const App *a);        /* typed and keyed turns: also off while painting */

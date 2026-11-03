@@ -529,7 +529,6 @@ static void coach_typed(App *a, const Move *mv, int n) {
 static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     Vector2 m = GetMousePosition();
     bool enabled = !app_busy(a) && !playback_view(&a->pb).coach.running;
-    bool turns = app_can_turn(a);
     ui_focus_stop(a, r, 6, enabled); /* Enter here submits the moves, below */
     a->focus_input = a->focus_n;
     /* a click inside takes focus (ui_focus_keys already dropped it for any click) */
@@ -557,10 +556,13 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     /* show the tail of long input */
     const char *shown = a->input;
     while (*shown && ui_text_width_face(a, TYPE_MONO, shown, 15) > r.width - 16) shown++;
-    if (!a->input[0] && !focused)
-        ui_text(a, "R U R' U' or teach · faster · show", r.x + 10, r.y + (r.height - 14) / 2, 14, enabled ? UI_TERTIARY : UI_DISABLED);
-    else
+    if (!a->input[0] && !focused) {
+        char hint[64] = "R U R' U' or teach · faster · show";
+        if (a->edit_mode) snprintf(hint, sizeof hint, "Face %c: nine colors from W R G Y O B", "URFDLB"[a->typed_face]);
+        ui_text(a, hint, r.x + 10, r.y + (r.height - 14) / 2, 14, enabled ? UI_TERTIARY : UI_DISABLED);
+    } else {
         ui_text_face(a, TYPE_MONO, shown, r.x + 10, r.y + (r.height - 15) / 2, 15, enabled ? UI_TEXT : UI_DISABLED);
+    }
     if (focused && fmod(GetTime(), 1.0) < 0.55) {
         float cx = r.x + 10 + ui_text_width_face(a, TYPE_MONO, shown, 15) + 1;
         DrawRectangle((int)cx, (int)r.y + 8, 2, (int)r.height - 16, UI_TEXT);
@@ -577,8 +579,10 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     if (submit && enabled && a->input[0] && prompt_command(a, a->input)) {
         a->input[0] = 0;
         a->input_bad = false;
-    } else if (submit && enabled && a->input[0] && !turns && !playback_view(&a->pb).coach.locked) {
-        app_set_status(a, true, "Done painting to type moves.");
+    } else if (submit && enabled && a->input[0] && a->edit_mode) {
+        /* painting: the prompt takes a face, nine colors in facelet order */
+        if (app_type_face(a, a->input)) a->input[0] = 0, a->input_bad = false;
+        else a->input_bad = true;
     } else if (submit && enabled && a->input[0]) {
         Move mv[256];
         int n = moves_parse(a->input, mv, 256);
@@ -669,7 +673,7 @@ void ui_prompt(App *a, Rectangle r) {
     DrawRectangleRec(r, UI_PANEL);
     DrawRectangle((int)r.x, (int)r.y, (int)r.width, 1, UI_RULE);
     float x = r.x + PAD, w = r.width - 2 * PAD, h = 36, y = r.y + (r.height - h) / 2;
-    const char *bad = "Use moves like R U' F2, or teach, faster, show.";
+    const char *bad = a->edit_mode ? "Nine colors, like WWWWWWWWW." : "Use moves like R U' F2, or teach, faster, show.";
     float bad_w = a->input_bad ? ui_text_width(a, bad, 13) + 16 : 0;
     move_input(a, (Rectangle){x, y, w - 80 - bad_w, h}, (Rectangle){x + w - 72, y, 72, h});
     if (a->input_bad) ui_text(a, bad, x + w - 72 - bad_w, y + (h - 13) / 2, 13, UI_BAD);
@@ -724,13 +728,7 @@ void ui_left_panel(App *a, Rectangle r) {
 
         if (a->edit_mode) {
             if (ui_button(a, (Rectangle){x, y, half, 32}, "Done painting", false, true)) app_set_edit(a, false);
-            if (ui_button(a, (Rectangle){x + half + 8, y, half, 32}, "Check cube", false, true)) {
-                const char *err = cube_validate(playback_view(&a->pb).cube);
-                if (err)
-                    app_set_status(a, true, "Invalid cube: %s", err);
-                else
-                    app_set_status(a, false, "Cube is valid and solvable");
-            }
+            if (ui_button(a, (Rectangle){x + half + 8, y, half, 32}, "Check cube", false, true)) app_check_cube(a);
             y += 40;
             float sw = (w - 5 * 6) / 6;
             for (int c = 0; c < NUM_COLORS; c++) {
@@ -1340,7 +1338,7 @@ void ui_right_panel(App *a, Rectangle r) {
     y += 34;
 
     if (a->edit_mode) {
-        y += text_wrapped(a, "Choose a color, then paint each sticker. Centers stay fixed.", x, y, w, 14,
+        y += text_wrapped(a, "Choose a color, then paint each sticker, or type each face into the prompt as nine colors (U R F D L B). Centers stay fixed.", x, y, w, 14,
                           UI_SECONDARY, true) + 16;
         float net_h = w * 9 / 12;
         render_net(a, (Rectangle){x, y, w, net_h});

@@ -155,6 +155,25 @@ static void test_cubie(void) {
         Cube parsed;
         cube_to_string(&c, str);
         CHECK(cube_from_string(&parsed, str) == 0 && cube_equal(&parsed, &c), "string round trip");
+        /* typing every face back, in URFDLB order, rebuilds the cube */
+        Cube typed = c;
+        for (int f = 0; f < NUM_FACES; f++) {
+            char letters[10];
+            for (int i = 0; i < 9; i++) letters[i] = "WRGYOB"[c.f[f * 9 + i]];
+            letters[9] = 0;
+            CHECK(cube_set_face(&typed, f, letters) == 0, "typed face %d refused", f);
+        }
+        CHECK(cube_equal(&typed, &c), "typed faces differ from the cube");
+    }
+
+    {
+        Cube s;
+        cube_reset(&s);
+        CHECK(cube_set_face(&s, FACE_U, "WWWWWWWW") == -1, "short face accepted");
+        CHECK(cube_set_face(&s, FACE_U, "WWWWWWWWX") == -1, "bad letter accepted");
+        CHECK(cube_set_face(&s, FACE_U, "WWWWRWWWW") == -2, "wrong center accepted");
+        CHECK(s.f[FACE_U * 9] == COLOR_WHITE, "failed face changed the cube");
+        CHECK(cube_set_face(&s, FACE_U, "wrgywobwr") == 0, "lowercase refused");
     }
 
     Cube c;

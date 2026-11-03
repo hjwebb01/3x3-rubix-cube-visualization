@@ -255,6 +255,20 @@ int cube_from_string(Cube *c, const char *s) {
     return 0;
 }
 
+int cube_set_face(Cube *c, int face, const char *letters) {
+    static const char COLOR_CHARS[] = "WRGYOB";
+    uint8_t col[9];
+    if (strlen(letters) != 9) return -1;
+    for (int i = 0; i < 9; i++) {
+        const char *p = strchr(COLOR_CHARS, toupper((unsigned char)letters[i]));
+        if (!p || !*p) return -1;
+        col[i] = (uint8_t)(p - COLOR_CHARS);
+    }
+    if (col[4] != c->f[face * 9 + 4]) return -2;
+    memcpy(&c->f[face * 9], col, 9);
+    return 0;
+}
+
 void cube_to_string(const Cube *c, char out[NUM_FACELETS + 1]) {
     static const char FACE_CHARS[] = "URFDLB";
     char by_color[256];

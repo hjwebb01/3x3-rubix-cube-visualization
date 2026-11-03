@@ -212,6 +212,35 @@ void app_paint_sticker(App *a, int sticker) {
     playback_set_cube(&a->pb, &c);
 }
 
+void app_check_cube(App *a) {
+    const char *err = cube_validate(playback_view(&a->pb).cube);
+    if (err)
+        app_set_status(a, true, "Invalid cube: %s", err);
+    else
+        app_set_status(a, false, "Cube is valid and solvable");
+}
+
+bool app_type_face(App *a, const char *letters) {
+    static const char FACES[] = "URFDLB";
+    int face = a->typed_face;
+    while (face < NUM_FACES && !playback_coach_may_paint(&a->pb, face * 9)) face++; /* paint top: only U */
+    if (face == NUM_FACES) face = FACE_U;
+    Cube c = *playback_view(&a->pb).cube;
+    int err = cube_set_face(&c, face, letters);
+    if (err) {
+        if (err == -1) app_set_status(a, true, "Face %c needs nine colors from W R G Y O B", FACES[face]);
+        else app_set_status(a, true, "The center of face %c is %s: type it there", FACES[face], COLOR_NAMES[c.f[face * 9 + 4]]);
+        return false;
+    }
+    a->can_undo = false;
+    playback_set_cube(&a->pb, &c);
+    do face++; while (face < NUM_FACES && !playback_coach_may_paint(&a->pb, face * 9));
+    a->typed_face = face % NUM_FACES;
+    if (face < NUM_FACES) app_set_status(a, false, "Face %c typed: now face %c", FACES[face - 1], FACES[face]);
+    else app_check_cube(a);
+    return true;
+}
+
 void app_toggle_screen_only(App *a) {
     a->screen_only = !a->screen_only;
     a->focus = 0; /* the widget that had focus may be hidden now */
@@ -223,13 +252,10 @@ void app_set_edit(App *a, bool on) {
         if (!app_can_change_cube(a)) return;
         playback_drop_solution(&a->pb);
         playback_flush(&a->pb);
-        app_set_status(a, false, "Edit mode: pick a color, click stickers (3D or net)");
+        a->typed_face = FACE_U;
+        app_set_status(a, false, "Edit mode: click stickers (3D or net), or type face U as nine colors");
     } else {
-        const char *err = cube_validate(playback_view(&a->pb).cube);
-        if (err)
-            app_set_status(a, true, "Invalid cube: %s", err);
-        else
-            app_set_status(a, false, "Cube is valid and solvable");
+        app_check_cube(a);
     }
     a->edit_mode = on;
 }
@@ -474,6 +500,36 @@ static void screenshot_driver(App *a, const char *path, int frame) {
     }
 }
 
+/* --faces NAME [W H]: paint mode, a face with the wrong center, then a scrambled cube typed face by face. Saves
+ * NAME-0.png to NAME-7.png (next to the executable, where raylib puts screenshots) and exits, printing the status line after each step. Types through
+ * app_type_face, so the prompt's own key handling is not exercised. */
+static void faces_driver(App *a, const char *name, int frame) {
+    enum { EVERY = 12, LAST = 7 };
+    int step = frame / EVERY;
+    if (frame % EVERY == 2) {
+        if (step == 0) app_set_edit(a, true);
+        else if (step == 1) app_type_face(a, "WWWWRWWWW");
+        else if (step <= LAST) {
+            Cube t;
+            Move mv[16];
+            cube_reset(&t);
+            int n = moves_parse("R U F' D2 L B' R2 U'", mv, 16);
+            for (int i = 0; i < n; i++) cube_apply(&t, mv[i]);
+            char letters[10];
+            for (int i = 0; i < 9; i++) letters[i] = "WRGYOB"[t.f[(step - 2) * 9 + i]];
+            letters[9] = 0;
+            app_type_face(a, letters);
+        }
+    }
+    if (frame % EVERY == 8) {
+        char file[128];
+        snprintf(file, sizeof file, "%s-%d.png", name, step);
+        printf("%d: %s%s\n", step, a->status_error ? "error: " : "", a->status); /* the top bar clips it in a narrow window */
+        TakeScreenshot(file);
+        if (step == LAST) exit(0);
+    }
+}
+
 static void *warm_kociemba(void *arg) {
     (void)arg;
     kociemba_warm();
@@ -481,7 +537,8 @@ static void *warm_kociemba(void *arg) {
 }
 
 int main(int argc, char **argv) {
-    const char *shot = argc > 2 && strcmp(argv[1], "--screenshot") == 0 ? argv[2] : NULL;
+    bool faces = argc > 2 && strcmp(argv[1], "--faces") == 0;
+    const char *shot = argc > 2 && (faces || strcmp(argv[1], "--screenshot") == 0) ? argv[2] : NULL;
     cubie_init();
     /* build Kociemba's tables now so the first Kociemba solve doesn't wait seconds for them */
     pthread_t warm;
@@ -501,7 +558,7 @@ int main(int argc, char **argv) {
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     SetTraceLogLevel(LOG_WARNING);
-    /* --screenshot PATH [W H] also sets the window size, to check the small layout */
+    /* --screenshot PATH [W H] and --faces NAME [W H] also set the window size, to check the small layout */
     int w = shot && argc >= 5 ? atoi(argv[3]) : 1360, h = shot && argc >= 5 ? atoi(argv[4]) : 820;
     InitWindow(w, h, "Rubik's Cube Solver");
     SetWindowMinSize(600, 640); /* the stacked layout needs its band height; side-by-side is wider than STACK_W */
@@ -513,7 +570,7 @@ int main(int argc, char **argv) {
 
     int cursor_shown = -1;
     for (int frame = 0; !WindowShouldClose(); frame++) {
-        if (shot) screenshot_driver(a, shot, frame);
+        if (shot) (faces ? faces_driver : screenshot_driver)(a, shot, frame);
         /* scale the whole UI with the window, so a large window gets larger type instead of empty space */
         float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
         a->ui_scale = fminf(fmaxf(fminf(sw / 1360, sh / 820), 1), 2);

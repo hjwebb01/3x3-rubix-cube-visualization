@@ -29,7 +29,7 @@ Prototype: the "07 · Seam prototype" board on the design canvas.
    Each card shows its method and Move count.
 4. **Keys.** Space, the arrow keys and Esc act only while the prompt is empty; everything else is typed into the prompt.
 5. **Notation.** `R'`, `Ri` and lowercase are all accepted. Rotations (`x y z`) are ignored when checking sync, the same way Move count leaves them out.
-6. **Entering faces.** Type nine letters per face, or click stickers on the net. Check cube runs after the sixth face.
+6. **Entering faces.** While painting, the prompt takes nine color letters (`WRGYOB`) for the next face in U R F D L B order, or you click stickers on the net. A centre that differs from the cube's is refused. Check cube runs after the sixth face. Under `paint top` only U is asked for.
 7. **Checking sync.** Each typed move must match the expected move exactly. When the seam tears:
    - `fix` undoes your move.
    - `trust` applies your move to the model and solves again from there.
