@@ -457,6 +457,22 @@ static void test_coach_trust(void) {
     CHECK(v.coach.mode == COACH_PRACTICE && v.coach.step == 0 && v.playhead == 0, "practice did not continue from the re-solve");
 }
 
+static void test_coach_trust_rotations(void) {
+    printf("playback: coach trust ignores rotations\n");
+    static Solution s;
+    build_flat(&s);
+    playback_init(&pb);
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+    playback_coach_unsync(&pb, false);
+    Move typed[2] = {ABC_MOVES[1], MOVE(MB_X, 1)};
+    playback_coach_trust(&pb, typed, 2);
+    Move face = ABC_MOVES[1];
+    Cube typed_cube = after(&face, 1);
+    CHECK(cube_equal(playback_view(&pb).cube, &typed_cube), "trust applied a rotation to the model");
+}
+
 static void test_coach_paint_top(void) {
     printf("playback: coach paint top reopens only the top face\n");
     static Solution s;
@@ -519,6 +535,7 @@ void test_playback(void) {
     test_coach_transitions();
     test_coach_repaint();
     test_coach_trust();
+    test_coach_trust_rotations();
     test_coach_paint_top();
     test_scramble_seals();
 }

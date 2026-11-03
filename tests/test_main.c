@@ -109,6 +109,13 @@ static void test_moves(void) {
     int n2 = moves_parse(buf, mv2, 64);
     CHECK(n2 == n && memcmp(mv, mv2, (size_t)n) == 0, "round trip");
     CHECK(moves_parse("R Q", mv, 64) < 0, "parse should reject Q");
+    /* decision 5: Ri is R', and lowercase parses as the wide turns (r = Rw) */
+    CHECK(moves_parse("Ri", mv, 64) == 1 && mv[0] == MOVE(MB_R, 3), "Ri is not R'");
+    CHECK(moves_parse("R2i", mv, 64) == 1 && mv[0] == MOVE(MB_R, 2), "R2i is not R2");
+    CHECK(moves_parse("Ri'", mv, 64) < 0, "Ri' should be rejected");
+    n = moves_parse("r u r' u'", mv, 64);
+    CHECK(n == 4 && mv[0] == MOVE(MB_RW, 1) && mv[1] == MOVE(MB_UW, 1) && mv[2] == MOVE(MB_RW, 3) && mv[3] == MOVE(MB_UW, 3),
+          "lowercase did not parse as wide turns");
 }
 
 static void test_cubie(void) {

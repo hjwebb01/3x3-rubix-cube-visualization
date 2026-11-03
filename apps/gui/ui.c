@@ -510,7 +510,8 @@ static bool prompt_command(App *a, const char *text) {
 /* The prompt: typed moves or a command word, with its Apply button. */
 static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     Vector2 m = GetMousePosition();
-    bool enabled = app_can_turn(a);
+    bool enabled = app_can_change_cube(a); /* painting leaves the prompt on: commands work, moves wait (below) */
+    bool turns = app_can_turn(a);
     ui_focus_stop(a, r, 6, enabled); /* Enter here submits the moves, below */
     a->focus_input = a->focus_n;
     /* a click inside takes focus (ui_focus_keys already dropped it for any click) */
@@ -548,7 +549,7 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     }
 
     if (!enabled) {
-        const char *why = a->edit_mode ? "Done painting to type moves." : "Wait for the solver to finish.";
+        const char *why = "Wait for the solver to finish.";
         tip_at(r, why);
         tip_at(apply_btn, why);
     } else if (!a->input[0]) {
@@ -558,6 +559,8 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     if (submit && enabled && a->input[0] && prompt_command(a, a->input)) {
         a->input[0] = 0;
         a->input_bad = false;
+    } else if (submit && enabled && a->input[0] && !turns) {
+        app_set_status(a, true, "Done painting to type moves.");
     } else if (submit && enabled && a->input[0]) {
         Move mv[256];
         int n = moves_parse(a->input, mv, 256);
@@ -811,7 +814,7 @@ static int move_word(const char *w, size_t len) {
     buf[len] = 0;
     Move mv[2];
     if (moves_parse(buf, mv, 2) != 1) return 0;
-    return strpbrk(buf, "'2") ? 2 : 1;
+    return strpbrk(buf, "'i2") ? 2 : 1;
 }
 
 static void append_word(char *buf, size_t size, size_t *n, const char *s, size_t len) {

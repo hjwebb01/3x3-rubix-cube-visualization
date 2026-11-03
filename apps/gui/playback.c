@@ -305,7 +305,8 @@ void playback_coach_repaint(Playback *pb) {
 void playback_coach_trust(Playback *pb, const Move *m, int n) {
     if (pb->coach != COACH_UNSYNCED) return;
     playback_coach_repaint(pb); /* the typed moves change the cube, so the Solution is re-planned */
-    cube_apply_seq(&pb->cube, m, n);
+    for (int i = 0; i < n; i++)
+        if (!move_is_rotation(m[i])) cube_apply(&pb->cube, m[i]); /* rotations are view turns: not sync */
 }
 
 void playback_coach_paint_top(Playback *pb) {

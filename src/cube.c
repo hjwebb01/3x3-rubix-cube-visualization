@@ -186,7 +186,7 @@ int moves_parse(const char *s, Move *out, int max) {
             turns = 3;
             p++;
         }
-        if (*p == '\'') {
+        if (*p == '\'' || *p == 'i') { /* i is the inverse, as in Ri */
             turns = 4 - turns;
             p++;
         } else if (p[0] == 0xE2 && p[1] == 0x80 && p[2] == 0x99) { /* typographic ’ */
