@@ -37,13 +37,16 @@ If raylib (version 5 or later) is not installed, CMake downloads raylib 5.5 auto
 ./build/rubik_gui
 ```
 
-- **Scramble / Reset**, pick a **method**, then **Solve**. The solver runs on a background thread.
-- **Learn:** a lesson box above the solution explains the current step: its goal, what to look for and the algorithm to memorize. Tick **Pause to explain each step** to pause at the start of every step so you can read it, then press Play to watch the moves.
-- **Coach:** press **Coach me on my cube**, match the screen to your cube (do the guided scramble or paint it), then press **Solve**. Each Step's moves stay hidden until you show them. Coach works with Beginner and CFOP only.
-- **X-ray:** tick **Highlight each step's pieces** (or press `H`) to fade the parts of the cube the current step ignores. The pieces it works on stay in full color, such as the F2L pair or the yellow stickers during OLL. Pieces that were already solved stay dimly colored, so you can watch them move out of place and back. The computer methods have no X-ray.
-- **Playback:** play/pause, step, jump to the start or end, and set the speed (from slow to instant). Click any move or step in the solution list to jump there, or drag the progress bar.
-- **Keys:** `U R F D L B M E S X Y Z` turn the cube, and `Shift` makes the move prime. `Space` plays or pauses and `H` toggles X-ray. The arrow keys step, `Page Up`/`Page Down` jump to the previous or next step, and `Home`/`End` jump to either end. `Enter` solves, `Ctrl+S` scrambles and `Ctrl+Z` undoes the last Scramble or Reset (an **Undo** button appears too). `Tab` and `Shift+Tab` move between the buttons, and `Enter` or `Space` presses the focused one.
-- **Type moves:** you can enter any sequence in standard notation, including wide moves (`Rw`/`r`), slices, rotations and brackets.
+The window is split by the **seam**. The left half is your cube, in your hand: its setup, its Solution and the Lesson for the current Step. The right half is the cube on screen, with its move list. The seam between them shows whether the two cubes are in sync, and everything is typed into one prompt along the bottom. Below 900 px wide the halves stack: the left half becomes a band across the top, the seam runs across the window and the screen cube sits below.
+
+- **Two ways in:** **I have a cube** matches the screen to your cube, by painting it or by a guided scramble, then coaches you through the Steps (Beginner and CFOP only). **Give me a scramble** shows a scramble to do on your cube, and the seam starts sealed.
+- **Prompt:** type moves in standard notation, including wide moves (`Rw`/`r`), slices, rotations, brackets, and `R'` or `Ri`. Or use a command:
+  - `teach` solves with Beginner and turns X-ray on, `faster` with CFOP, and `show` with Kociemba (`show thistle` for Thistlethwaite). Each card shows its Move count.
+  - `solve`, `scramble`, `reset`, `undo`, `xray` and `help` do what their buttons and shortcuts do. `help` shows the keyboard list.
+  - While a torn seam is waiting, `fix` returns to the Step's start, `trust` followed by moves makes them the truth and solves again, and `paint top` repaints only the top face.
+- **Keys:** `U R F D L B M E S X Y Z` turn the cube, and `Shift` makes the move prime. `Space` plays or pauses the Solution, and `Left`/`Right` step through it. `Home`/`End` jump to either end, `Page Up`/`Page Down` to the previous or next Step, and `-`/`=` slow down or speed up. `H` toggles X-ray and `V` shows the screen only, which hides the seam and both halves. `Enter` solves, `Ctrl+S` scrambles and `Ctrl+Z` undoes the last Scramble or Reset. `Space`, the arrows and `Esc` act only while the prompt is empty. `Tab` and `Shift+Tab` move between the controls, and `Enter` or `Space` presses the focused one.
+- **Seam:** drag it to scrub through the Solution. Each Step has a notch at its start. Click any move or Step in the list to jump there.
+- **Learn:** tick **Pause to explain each step** to pause at the start of every Step so you can read its lesson, then press `Space` to watch the moves. Tick **Highlight each step's pieces** (or press `H`) to fade the parts of the cube the current step ignores. The computer methods have no X-ray.
 - **Paint stickers:** choose a color, then click stickers on the 3D cube or the net to paint them. Without a mouse, `Tab` to a sticker on the net and press `Enter`. **Check cube** tells you whether the state is legal (twisted corners, flipped edges, parity and so on).
 - **Camera:** drag to orbit and use the mouse wheel to zoom.
 

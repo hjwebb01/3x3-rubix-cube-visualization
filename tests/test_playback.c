@@ -515,6 +515,31 @@ static void test_scramble_seals(void) {
     CHECK(!playback_view(&pb).sealed, "set_cube kept the seal");
 }
 
+static void test_playhead_seam(void) {
+    printf("playback: the Playhead the seam drives: seek, clamping, and no seeking while practising\n");
+    static Solution s;
+    build_abc(&s); /* 5 moves: A [0..2), B [2..4), C [4..5) */
+    playback_init(&pb);
+    playback_load(&pb, &s);
+    playback_seek(&pb, 3);
+    Cube three = after(ABC_MOVES, 3);
+    PlaybackView v = playback_view(&pb);
+    CHECK(v.playhead == 3 && cube_equal(v.cube, &three), "seek to the middle did not land on the Playhead");
+    CHECK(v.step.step == 1, "the middle of the Solution should be in Step B");
+    playback_seek(&pb, -4);
+    CHECK(playback_view(&pb).playhead == 0, "seek below 0 was not clamped");
+    playback_seek(&pb, 42);
+    CHECK(playback_view(&pb).playhead == 5, "seek above n was not clamped");
+
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+    int before = playback_view(&pb).playhead;
+    playback_seek(&pb, 4);
+    v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_PRACTICE && v.playhead == before, "seek moved the Playhead while a Step is practised");
+}
+
 void test_playback(void) {
     test_user_turn();
     test_half_turn_slower();
@@ -538,4 +563,5 @@ void test_playback(void) {
     test_coach_trust_rotations();
     test_coach_paint_top();
     test_scramble_seals();
+    test_playhead_seam();
 }
