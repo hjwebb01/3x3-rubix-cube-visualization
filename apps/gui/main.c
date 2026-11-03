@@ -504,7 +504,7 @@ int main(int argc, char **argv) {
     /* --screenshot PATH [W H] also sets the window size, to check the small layout */
     int w = shot && argc >= 5 ? atoi(argv[3]) : 1360, h = shot && argc >= 5 ? atoi(argv[4]) : 820;
     InitWindow(w, h, "Rubik's Cube Solver");
-    SetWindowMinSize(600, 600); /* the stacked layout needs room; side-by-side is wider than STACK_W */
+    SetWindowMinSize(600, 640); /* the stacked layout needs its band height; side-by-side is wider than STACK_W */
     if (shot) SetWindowMinSize(w, h), SetWindowMaxSize(w, h); /* a fixed size makes tiling WMs float it at W x H */
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
