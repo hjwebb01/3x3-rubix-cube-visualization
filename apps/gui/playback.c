@@ -18,6 +18,13 @@ static bool teach_stops_here(const Playback *pb) {
     return at.k > 1 && pb->sol.steps[at.step].start == pb->queued_pos;
 }
 
+/* Paused at a Teach stop: teach is on and the Playhead is where the last Teach pause (or Play) left it. */
+static bool teach_stop_at_playhead(const Playback *pb) {
+    return pb->transport == TRANSPORT_PAUSED && pb->teach && pb->coach == COACH_OFF && !pb->animating &&
+           pb->queued_pos == pb->playhead && pb->teach_paused_at == pb->playhead && pb->playhead < pb->sol.n &&
+           teach_stops_here(pb);
+}
+
 /* Called when the queue has run dry while playing: queue the next Solution move, or pause. */
 static void auto_play(Playback *pb) {
     if (pb->teach && pb->queued_pos != pb->teach_paused_at && teach_stops_here(pb)) {
@@ -118,6 +125,7 @@ PlaybackView playback_view(const Playback *pb) {
         v.step.step = -1;
     }
     v.sealed = pb->sealed;
+    v.teach_stop = teach_stop_at_playhead(pb);
     v.coach.mode = pb->coach;
     v.coach.basis = pb->coach_basis;
     v.coach.locked = coach_practising(pb);
@@ -240,6 +248,17 @@ void playback_seek_step(Playback *pb, int dir) {
 
 void playback_set_teach(Playback *pb, bool on) { pb->teach = on; }
 
+bool playback_teach_continue(Playback *pb, const Move *m, int n) {
+    if (!teach_stop_at_playhead(pb)) return false;
+    for (int i = 0; i < n; i++) {
+        if (move_is_rotation(m[i])) continue;
+        if (m[i] != pb->sol.moves[pb->playhead]) return false;
+        pb->transport = TRANSPORT_PLAYING;
+        return true;
+    }
+    return false;
+}
+
 void playback_coach_begin(Playback *pb) {
     if (pb->coach != COACH_OFF) return;
     playback_drop_solution(pb);
@@ -307,6 +326,24 @@ void playback_coach_trust(Playback *pb, const Move *m, int n) {
     playback_coach_repaint(pb); /* the typed moves change the cube, so the Solution is re-planned */
     for (int i = 0; i < n; i++)
         if (!move_is_rotation(m[i])) cube_apply(&pb->cube, m[i]); /* rotations are view turns: not sync */
+}
+
+CoachTyped playback_coach_typed(Playback *pb, const Move *m, int n) {
+    if (!coach_free(pb)) return COACH_TYPED_IGNORED;
+    Move turns[256];
+    int k = 0;
+    for (int i = 0; i < n && k < 256; i++)
+        if (!move_is_rotation(m[i])) turns[k++] = m[i];
+    if (k == 0) return COACH_TYPED_IGNORED;
+    const SolveStep *st = &pb->sol.steps[pb->coach_step];
+    bool same = k == st->count;
+    for (int i = 0; same && i < k; i++) same = turns[i] == pb->sol.moves[st->start + i];
+    if (!same) {
+        playback_coach_unsync(pb, true);
+        return COACH_TYPED_MISMATCH;
+    }
+    pb->coach_sub = COACH_STEP_FOLLOW; /* the screen plays the Step through, as after Mark as followed */
+    return COACH_TYPED_MATCH;
 }
 
 void playback_coach_paint_top(Playback *pb) {

@@ -507,10 +507,28 @@ static bool prompt_command(App *a, const char *text) {
     return false;
 }
 
-/* The prompt: typed moves or a command word, with its Apply button. */
+/* Typed moves while a Step is practised: they are checked against the Step, never applied to the screen. */
+static void coach_typed(App *a, const Move *mv, int n) {
+    if (playback_view(&a->pb).coach.mode == COACH_UNSYNCED) {
+        app_set_status(a, true, "Fix the seam first: fix, trust MOVES, or paint top");
+        return; /* the input stays for the user to retype after fixing */
+    }
+    CoachTyped r = playback_coach_typed(&a->pb, mv, n);
+    if (r == COACH_TYPED_IGNORED) {
+        app_set_status(a, true, "Type the Step's moves: rotations alone are not checked");
+        return;
+    }
+    a->input[0] = 0;
+    a->input_bad = false;
+    if (r == COACH_TYPED_MATCH) app_set_status(a, false, "Your moves match the Step: the screen plays it through");
+    else app_set_status(a, false, "Your moves differ from the Step: fix, trust MOVES, or paint top");
+}
+
+/* The prompt: typed moves or a command word, with its Apply button. Open unless the Solver runs or a Step is
+ * playing through; while a Step is practised it takes the typed-move check and the Coach commands. */
 static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     Vector2 m = GetMousePosition();
-    bool enabled = app_can_change_cube(a); /* painting leaves the prompt on: commands work, moves wait (below) */
+    bool enabled = !app_busy(a) && !playback_view(&a->pb).coach.running;
     bool turns = app_can_turn(a);
     ui_focus_stop(a, r, 6, enabled); /* Enter here submits the moves, below */
     a->focus_input = a->focus_n;
@@ -549,7 +567,7 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     }
 
     if (!enabled) {
-        const char *why = "Wait for the solver to finish.";
+        const char *why = playback_view(&a->pb).coach.running ? "Wait for the Step to play through." : "Wait for the solver to finish.";
         tip_at(r, why);
         tip_at(apply_btn, why);
     } else if (!a->input[0]) {
@@ -559,7 +577,7 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     if (submit && enabled && a->input[0] && prompt_command(a, a->input)) {
         a->input[0] = 0;
         a->input_bad = false;
-    } else if (submit && enabled && a->input[0] && !turns) {
+    } else if (submit && enabled && a->input[0] && !turns && !playback_view(&a->pb).coach.locked) {
         app_set_status(a, true, "Done painting to type moves.");
     } else if (submit && enabled && a->input[0]) {
         Move mv[256];
@@ -567,6 +585,17 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
         if (n < 0) {
             app_set_status(a, true, "Unable to read \"%s\"", a->input);
             a->input_bad = true;
+        } else if (playback_view(&a->pb).coach.locked) {
+            coach_typed(a, mv, n);
+        } else if (playback_view(&a->pb).teach_stop) {
+            if (!playback_teach_continue(&a->pb, mv, n)) {
+                app_set_status(a, true, "Not the next move: type the move to continue");
+                a->input_bad = true;
+            } else {
+                app_set_status(a, false, "Continuing");
+                a->input[0] = 0;
+                a->input_bad = false;
+            }
         } else {
             app_user_moves(a, mv, n, false);
             app_set_status(a, false, "Applied %d %s", n, n == 1 ? "move" : "moves");
@@ -605,9 +634,10 @@ void ui_seam(App *a, Rectangle r) {
     Color edge;
     DrawRectangleRec(r, UI_BG);
     if (v.coach.mode == COACH_UNSYNCED) {
-        for (float s = 0; s < span; s += 16) { /* zigzag: the sync is torn */
-            DrawLineEx(seam_pt(r, across, s, 2), seam_pt(r, across, s + 8, t - 2), 2, UI_DRIFT);
-            DrawLineEx(seam_pt(r, across, s + 8, t - 2), seam_pt(r, across, s + 16, 2), 2, UI_DRIFT);
+        /* zigzag: the sync is torn. It runs 4 px past each end of the seam, over the panel edges, so the tear reads */
+        for (float s = -4; s < span + 4; s += 16) {
+            DrawLineEx(seam_pt(r, across, s, 2), seam_pt(r, across, s + 8, t - 2), 3, UI_DRIFT);
+            DrawLineEx(seam_pt(r, across, s + 8, t - 2), seam_pt(r, across, s + 16, 2), 3, UI_DRIFT);
         }
         snprintf(label, sizeof label, "TORN");
         edge = UI_DRIFT;
@@ -721,8 +751,8 @@ void ui_left_panel(App *a, Rectangle r) {
             y += 42;
         }
     }
-    PlaybackView seam = playback_view(&a->pb);
-    if (cv.mode == COACH_OFF && !seam.sol && !seam.sealed) {
+    PlaybackView pv = playback_view(&a->pb);
+    if (cv.mode == COACH_OFF && !pv.sol && !pv.sealed) {
         /* the open seam: the two ways in. A scramble is handed out as a guided one, for the user's own cube */
         if (ui_button(a, (Rectangle){x, y, w, 32}, "I have a cube", false, !busy)) app_coach_toggle(a);
         y += 40;
@@ -1008,6 +1038,7 @@ void ui_move_display(App *a, Rectangle r) {
         snprintf(cap, sizeof cap, "NO SOLUTION YET");
         snprintf(meaning, sizeof meaning, "Moves appear here after you press Solve.");
     }
+    if (v.teach_stop) snprintf(meaning, sizeof meaning, "Type the move to continue.");
 
     caption(a, cap, x, y, (turning || (s && v.playhead < n)) ? UI_ACCENT : UI_TERTIARY);
     float gy = card.y + 22;

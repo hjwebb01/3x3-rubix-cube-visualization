@@ -281,6 +281,29 @@ static void test_teach_pauses(void) {
     CHECK(!v.playing && v.playhead == 5 && cube_equal(v.cube, &all), "did not play to the end");
 }
 
+static void test_teach_continue(void) {
+    printf("playback: a Teach pause is flagged, and the next move typed continues it\n");
+    static Solution s;
+    build_abc(&s); /* the next move at the first pause is F */
+    playback_init(&pb);
+    playback_set_teach(&pb, true);
+    playback_load(&pb, &s);
+    playback_toggle(&pb);
+    playback_tick(&pb, 1.0f, 0.0f);
+    PlaybackView v = playback_view(&pb);
+    CHECK(v.teach_stop && v.playhead == 2 && !v.playing, "no Teach pause flagged at B");
+    Move wrong = MOVE(MB_R, 1);
+    CHECK(!playback_teach_continue(&pb, &wrong, 1), "a wrong move continued the Teach pause");
+    CHECK(!playback_view(&pb).playing, "a wrong move started playing");
+    Move rot_f[2] = {MOVE(MB_Y, 1), MOVE(MB_F, 1)};
+    CHECK(playback_teach_continue(&pb, rot_f, 2), "the next move did not continue the Teach pause");
+    v = playback_view(&pb);
+    CHECK(v.playing && !v.teach_stop, "continuing did not resume playing");
+    playback_tick(&pb, 1.0f, 0.0f);
+    v = playback_view(&pb);
+    CHECK(!v.playing && v.playhead == 4 && v.teach_stop, "playing on did not pause again at C");
+}
+
 static void test_teach_skipped_step(void) {
     printf("playback: teach with a Skipped Step\n");
     static Solution s;
@@ -500,6 +523,39 @@ static void test_coach_paint_top(void) {
     CHECK(playback_coach_may_paint(&pb, FACE_R * 9 + 1), "full repaint kept the top-only lock");
 }
 
+static void test_coach_typed(void) {
+    printf("playback: typed moves check the Step: a match plays it through, a mismatch tears the seam, rotations are ignored\n");
+    static Solution s;
+    build_abc(&s); /* Step A is R U */
+    playback_init(&pb);
+    playback_coach_begin(&pb);
+    playback_load(&pb, &s);
+    CHECK(playback_coach_start(&pb), "coach did not start");
+
+    Move wrong = MOVE(MB_F, 1);
+    CHECK(playback_coach_typed(&pb, &wrong, 1) == COACH_TYPED_MISMATCH, "a wrong move was not a mismatch");
+    PlaybackView v = playback_view(&pb);
+    CHECK(v.coach.mode == COACH_UNSYNCED && v.coach.attempted, "a mismatch did not tear the seam as an attempt");
+    playback_coach_restore(&pb);
+
+    Move rot_ru[3] = {MOVE(MB_X, 1), MOVE(MB_R, 1), MOVE(MB_U, 1)};
+    CHECK(playback_coach_typed(&pb, rot_ru, 3) == COACH_TYPED_MATCH, "rotations were not ignored in the check");
+    CHECK(playback_view(&pb).coach.running, "a match did not start playing the Step through");
+    playback_tick(&pb, 0.0f, 0.0f); /* instant turns: the Step plays through in one call */
+    v = playback_view(&pb);
+    CHECK(!v.coach.running && v.coach.step == 1, "the matched Step did not advance to Step B");
+    Cube two = after(ABC_MOVES, 2);
+    CHECK(cube_equal(v.cube, &two), "the screen did not play the matched Step through");
+    CHECK(v.coach.basis == COACH_BASIS_ASSUMED, "a matched Step did not assume the physical match");
+
+    Move partial = MOVE(MB_F, 1);
+    CHECK(playback_coach_typed(&pb, &partial, 1) == COACH_TYPED_MISMATCH, "a Step B mismatch was not reported");
+    playback_coach_restore(&pb);
+    CHECK(playback_coach_typed(&pb, rot_ru, 1) == COACH_TYPED_IGNORED, "a rotation alone was checked as a move");
+    CHECK(playback_view(&pb).coach.step == 1 && playback_view(&pb).coach.mode == COACH_PRACTICE,
+          "an ignored input changed the state");
+}
+
 static void test_scramble_seals(void) {
     printf("playback: a scramble seals the seam; a user turn does not; replacing the cube unseals it\n");
     playback_init(&pb);
@@ -562,6 +618,8 @@ void test_playback(void) {
     test_coach_trust();
     test_coach_trust_rotations();
     test_coach_paint_top();
+    test_coach_typed();
+    test_teach_continue();
     test_scramble_seals();
     test_playhead_seam();
 }

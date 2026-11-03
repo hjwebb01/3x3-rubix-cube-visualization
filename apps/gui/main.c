@@ -523,16 +523,19 @@ int main(int argc, char **argv) {
         bool screen_only = a->screen_only;
         /* narrower than STACK_W: the left half is a top band, the seam runs across, the screen half sits below */
         bool stacked = !screen_only && W < STACK_W;
-        float lw = screen_only ? 0 : stacked ? W / 2 : fminf(fmaxf(W * 0.21f, 236), 288);
-        float rw = screen_only ? 0 : stacked ? W - lw : fminf(fmaxf(W * 0.26f, 260), 372);
-        float top_h = 44, prompt_h = 64, body_h = H - prompt_h;
-        float move_h = fminf(fmaxf(body_h * 0.16f, 104), 136);
-        if (playback_view(&a->pb).coach.mode != COACH_OFF) {
-            move_h = 270; /* the Coach card and its buttons */
-        }
         float seam_w = screen_only ? 0 : stacked ? 24 : 16; /* stacked: thick enough for the seam's label */
-        /* height of the left half; stacked, it takes more than half so its bottom controls clear the method list */
-        float lh = stacked ? body_h * 0.56f : body_h;
+        /* side by side the seam sits at the middle: the cube in hand and the screen cube take half the window each.
+         * The panels' minimum widths win below about 1008 px, so the screen cube gets less than half there */
+        float halves = (W - seam_w) / 2;
+        float lw = screen_only ? 0 : stacked ? W / 2 : fmaxf(236, halves * 0.47f);
+        float rw = screen_only ? 0 : stacked ? W - lw : fmaxf(260, halves - lw);
+        float top_h = 44, prompt_h = 64, body_h = H - prompt_h;
+        bool coaching = playback_view(&a->pb).coach.mode != COACH_OFF;
+        float move_h = fminf(fmaxf(body_h * 0.16f, 104), 136);
+        if (coaching) move_h = stacked ? fminf(270, body_h * 0.4f) : 270; /* the Coach card and its buttons */
+        /* height of the left half. Stacked, it takes most of the height so the method grid clears the checkbox;
+         * while coaching it holds only the net and the Stop button, so it takes less */
+        float lh = stacked ? body_h * (coaching ? 0.4f : 0.62f) : body_h;
         float cx = stacked ? 0 : lw + rw + seam_w, cy = stacked ? lh + seam_w : 0; /* where the screen half starts */
         float tx = stacked ? 0 : 32;                                              /* top bar clears the seam's label */
         Rectangle left = {0, 0, lw, lh};
@@ -559,8 +562,10 @@ int main(int argc, char **argv) {
         if (!screen_only) ui_left_panel(a, left);
         ui_top_bar(a, top);
         ui_move_display(a, move);
-        if (!screen_only) ui_right_panel(a, right);
-        if (!screen_only) ui_seam(a, seam); /* after the panels and top bar: its label overlaps them */
+        if (!screen_only) {
+            ui_right_panel(a, right);
+            ui_seam(a, seam); /* after the panels and top bar: its label overlaps them */
+        }
         ui_prompt(a, prompt);
         ui_help_overlay(a, view);
         /* sleep until input arrives unless something on screen is changing by itself */

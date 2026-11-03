@@ -91,6 +91,7 @@ typedef struct {
     int playhead;        /* 0..sol->n; 0 without a Solution */
     bool sealed;         /* a scramble made the cube and nothing has replaced it since: the seam is sealed without a Solution */
     bool playing;
+    bool teach_stop;     /* a Teach pause at a Step's start: the next move typed continues it */
     StepAt step;         /* solution_step_at(sol, playhead); step == -1 without a Solution */
     bool idle;           /* nothing turning, nothing queued, not playing, coach not moving the Playhead */
     CoachView coach;
@@ -125,6 +126,9 @@ void playback_seek(Playback *pb, int pos);
 void playback_seek_step(Playback *pb, int dir);
 /* Teach pauses: stop at the start of each Step so its Lesson can be read. */
 void playback_set_teach(Playback *pb, bool on);
+/* At a Teach pause: typed moves whose first non-rotation move is the next Solution move resume playing.
+ * Returns false, leaving the pause alone, otherwise. */
+bool playback_teach_continue(Playback *pb, const Move *m, int n);
 
 /* Coach. The Playhead stays at the start of the practised Step while the Step is
  * being tried, so the screen cube is the physical cube's assumed state. Turns,
@@ -153,6 +157,11 @@ void playback_coach_restore(Playback *pb);
 /* PRACTICE or UNSYNCED -> REPAINT: drops the Solution, so the user paints the physical
  * cube and then Solve checks it and solves afresh. */
 void playback_coach_repaint(Playback *pb);
+/* What playback_coach_typed made of typed moves. IGNORED: nothing was checked (not PRACTICE, running, or only rotations). */
+typedef enum { COACH_TYPED_IGNORED, COACH_TYPED_MATCH, COACH_TYPED_MISMATCH } CoachTyped;
+/* PRACTICE, not running: checks typed moves (rotations skipped) against the Step's moves. A match plays the
+ * Step through on screen and moves on, assumed matching; a mismatch tears the seam as an attempt. */
+CoachTyped playback_coach_typed(Playback *pb, const Move *m, int n);
 /* UNSYNCED -> REPAINT: the typed moves are the truth, applied to the screen cube. The
  * Solution is dropped, so Solve re-plans from there. Does nothing outside UNSYNCED. */
 void playback_coach_trust(Playback *pb, const Move *m, int n);

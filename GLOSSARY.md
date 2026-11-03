@@ -16,7 +16,7 @@
 - **Seam**: the strip between the two halves of the window, showing whether your cube and the cube on screen are in sync. It doubles as the Playhead and as the scrub bar for a Solution. Its states: **OPEN** (dashed grey, nothing entered yet), **SEALED** (after a scramble, Playhead at 0), **IN SYNC** (blue fill up to the Playhead) and **TORN** (orange zigzag, a typed move did not match). _Avoid_: transport bar, progress bar (the Seam replaced them).
 - **Step notch**: a mark on the Seam at the start of each Step that has moves.
 - **Screen only**: the view with the Seam and both halves hidden (`V`), leaving the cube on screen, its top bar and the prompt.
-- **Teach pause**: Playback stopping by itself when the Playhead reaches the start of a new Step, so the learner can read its Lesson before the moves play.
+- **Teach pause**: Playback stopping by itself when the Playhead reaches the start of a new Step, so the learner can read its Lesson before the moves play. The prompt then asks for the next move; typing it resumes playing.
 
 ## Coach
 
