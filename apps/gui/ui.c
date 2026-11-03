@@ -431,6 +431,8 @@ static bool method_row(App *a, Rectangle r, SolverId id, bool enabled) {
                  enabled ? UI_TEXT : UI_DISABLED);
     char est[64];
     method_estimate(solver_description(id), est, sizeof est);
+    const Solution *sol = playback_view(&a->pb).sol;
+    if (sol && a->sol_method == id) snprintf(est, sizeof est, "%d moves", solution_move_count(sol)); /* the real count once solved */
     float ew = ui_text_width_face(a, TYPE_MONO, est, 13);
     if (ui_text_width_face(a, TYPE_MEDIUM, solver_name(id), 14) + ew + 30 <= r.width) /* grid cells drop it */
         ui_text_face(a, TYPE_MONO, est, r.x + r.width - ew - 10, r.y + (r.height - 13) / 2, 13,
@@ -466,6 +468,14 @@ static bool coach_command(App *a, const char *w, const char *rest) {
     return false;
 }
 
+/* The word after `show`: "thistle" or "thistlethwaite" asks for Thistlethwaite; anything else is Kociemba. */
+static bool thistle_word(const char *rest) {
+    char w[16];
+    if (sscanf(rest, " %15s", w) != 1) return false;
+    for (char *c = w; *c; c++) *c = (char)tolower((unsigned char)*c);
+    return !strcmp(w, "thistle") || !strcmp(w, "thistlethwaite");
+}
+
 /* Words the prompt takes in place of moves. Returns false when text is not one of them. */
 static bool prompt_command(App *a, const char *text) {
     static const struct {
@@ -480,8 +490,13 @@ static bool prompt_command(App *a, const char *text) {
     if (coach_command(a, w, text + used)) return true;
     for (size_t i = 0; i < sizeof WORDS / sizeof WORDS[0]; i++) {
         if (strcmp(w, WORDS[i].word)) continue;
-        if (WORDS[i].method >= 0) a->method = (SolverId)WORDS[i].method;
-        if (WORDS[i].method >= 0 || !strcmp(w, "solve")) app_start_solve(a);
+        if (WORDS[i].method >= 0) {
+            a->method = (SolverId)WORDS[i].method;
+            if (!strcmp(w, "show") && thistle_word(text + used)) a->method = SOLVER_THISTLETHWAITE;
+            bool idle = !app_busy(a);
+            app_start_solve(a);
+            if (idle && app_busy(a) && !strcmp(w, "teach")) a->xray = true; /* Coach: teach highlights each Step's pieces */
+        } else if (!strcmp(w, "solve")) app_start_solve(a);
         else if (!strcmp(w, "scramble")) app_scramble(a);
         else if (!strcmp(w, "reset")) app_reset(a);
         else if (!strcmp(w, "undo")) app_undo(a);
