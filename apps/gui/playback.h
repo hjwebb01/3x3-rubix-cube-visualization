@@ -8,7 +8,6 @@
 #include "cube/solver.h"
 
 #define PLAYBACK_QUEUE_MAX 4096
-#define PLAYBACK_FAST_SECONDS 0.06f /* scramble turns, whatever the chosen speed */
 
 typedef struct {
     Move m;
@@ -33,8 +32,8 @@ typedef enum {
 typedef enum { COACH_BASIS_ASSUMED, COACH_BASIS_PAINTED } CoachBasis;
 
 /* Where the practised Step stands, meaningful only in PRACTICE and UNSYNCED.
- *   PRACTICE: HIDDEN <-> SHOWN; HIDDEN or SHOWN -> DEMO -> SHOWN; SHOWN -> FOLLOW -> HIDDEN at the next Step (or DONE)
- *   UNSYNCED: ATTEMPTED (tried alone) or MISMATCH (reported); restore -> HIDDEN
+ *   PRACTICE: HIDDEN <-> SHOWN; HIDDEN or SHOWN -> DEMO -> SHOWN; accepted moves -> FOLLOW -> HIDDEN (or DONE)
+ *   UNSYNCED: ATTEMPTED (tried alone) or MISMATCH (reported); restore -> HIDDEN at the last accepted position
  * DEMO and FOLLOW move the Playhead by themselves; nothing else is accepted until they finish. */
 typedef enum {
     COACH_STEP_HIDDEN,
@@ -78,6 +77,8 @@ typedef struct {
     CoachBasis coach_basis;
     CoachStep coach_sub;
     int coach_step;   /* sol.steps index of the Step practised, -1 outside PRACTICE */
+    int coach_target;
+    int coach_origin;
     bool coach_top;   /* REPAINT from paint top: only the U face may be painted */
 } Playback;
 
@@ -101,8 +102,8 @@ void playback_init(Playback *pb); /* solved cube, no Solution, paused, teach off
 PlaybackView playback_view(const Playback *pb);
 
 /* Advances animation by dt seconds. turn_seconds is the chosen duration of a
- * quarter turn; <= 0 means instant. */
-void playback_tick(Playback *pb, float dt, float turn_seconds);
+ * quarter turn, fast_seconds the same for fast (scramble) turns; <= 0 means instant. */
+void playback_tick(Playback *pb, float dt, float turn_seconds, float fast_seconds);
 
 /* User turns (or a scramble when fast): drops any Solution, then queues the turns. A scramble seals the seam. */
 void playback_turn(Playback *pb, const Move *m, int n, bool fast);
@@ -130,8 +131,8 @@ void playback_set_teach(Playback *pb, bool on);
  * Returns false, leaving the pause alone, otherwise. */
 bool playback_teach_continue(Playback *pb, const Move *m, int n);
 
-/* Coach. The Playhead stays at the start of the practised Step while the Step is
- * being tried, so the screen cube is the physical cube's assumed state. Turns,
+/* Coach. The Playhead records accepted moves within the practised Step, so the
+ * screen cube is the physical cube's assumed state. Turns,
  * toggle, step and seek do nothing in PRACTICE and UNSYNCED. Turning the physical
  * cube is the user's job: these calls only record what they report. */
 /* OFF -> SETUP. Drops any Solution. */
@@ -139,12 +140,13 @@ void playback_coach_begin(Playback *pb);
 /* Any state -> OFF. Keeps the cube and any Solution as they are. */
 void playback_coach_end(Playback *pb);
 void playback_coach_set_basis(Playback *pb, CoachBasis basis);
-/* SETUP or REPAINT, once a Solution has loaded: PRACTICE at its first Step. Returns
- * false, leaving the state alone, when there is no Step with moves to coach. */
+/* SETUP or REPAINT, once a Solution has loaded: PRACTICE at its first Step.
+ * Rotation moves require the same explicit confirmation as face turns.
+ * Returns false, leaving the state alone, when there is no Step with moves to coach. */
 bool playback_coach_start(Playback *pb);
 /* PRACTICE: reveal or hide the Step's moves. */
 void playback_coach_show(Playback *pb, bool on);
-/* PRACTICE: reveal the moves and play them on screen, then return to the Step's start. */
+/* PRACTICE: demonstrate the remaining moves, then return to the established baseline. */
 void playback_coach_demo(Playback *pb);
 /* PRACTICE with moves revealed: the user reports following them on the physical cube.
  * The screen plays the Step through and moves to the next one, assumed matching. */
@@ -152,15 +154,16 @@ void playback_coach_followed(Playback *pb);
 /* PRACTICE -> UNSYNCED: the physical cube may differ from the screen. attempted: the
  * user tried the Step alone rather than following moves. */
 void playback_coach_unsync(Playback *pb, bool attempted);
-/* UNSYNCED -> PRACTICE at the Step's start: the physical cube was restored to it. */
+/* UNSYNCED -> PRACTICE at the last accepted position: the physical cube was restored to it. */
 void playback_coach_restore(Playback *pb);
 /* PRACTICE or UNSYNCED -> REPAINT: drops the Solution, so the user paints the physical
  * cube and then Solve checks it and solves afresh. */
 void playback_coach_repaint(Playback *pb);
-/* What playback_coach_typed made of typed moves. IGNORED: nothing was checked (not PRACTICE, running, or only rotations). */
+/* What playback_coach_typed made of typed moves. IGNORED: nothing was checked (not PRACTICE, running, or empty). */
 typedef enum { COACH_TYPED_IGNORED, COACH_TYPED_MATCH, COACH_TYPED_MISMATCH } CoachTyped;
-/* PRACTICE, not running: checks typed moves (rotations skipped) against the Step's moves. A match plays the
- * Step through on screen and moves on, assumed matching; a mismatch tears the seam as an attempt. */
+/* PRACTICE, not running: checks a prefix of the remaining Step, including rotations.
+ * A match plays only that prefix, advancing Steps when complete. A mismatch applies none of the
+ * submitted moves and tears the seam, preserving the last accepted position for restore or trust. */
 CoachTyped playback_coach_typed(Playback *pb, const Move *m, int n);
 /* UNSYNCED -> REPAINT: the typed moves are the truth, applied to the screen cube. The
  * Solution is dropped, so Solve re-plans from there. Does nothing outside UNSYNCED. */

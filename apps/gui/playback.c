@@ -38,8 +38,8 @@ static void auto_play(Playback *pb) {
     }
 }
 
-static float turn_seconds_for(const PlaybackTurn *t, float turn_seconds) {
-    float secs = t->fast ? PLAYBACK_FAST_SECONDS : turn_seconds;
+static float turn_seconds_for(const PlaybackTurn *t, float turn_seconds, float fast_seconds) {
+    float secs = t->fast ? fast_seconds : turn_seconds;
     if (MOVE_TURNS(t->m) == 2) secs *= 1.5f;
     return secs;
 }
@@ -76,29 +76,29 @@ static void coach_forget(Playback *pb) {
     pb->coach_step = -1;
 }
 
-/* Called between turns while coach_running: queues the next move of the Step, or ends the run. */
+static void coach_ready(Playback *pb) {
+    while (pb->coach_step >= 0) {
+        const SolveStep *st = &pb->sol.steps[pb->coach_step];
+        int end = st->start + st->count;
+        if (pb->playhead < end) return;
+        pb->coach_step = next_step_with_moves(pb, pb->coach_step);
+    }
+    pb->coach = COACH_DONE;
+}
+
 static void coach_drive(Playback *pb) {
-    const SolveStep *st = &pb->sol.steps[pb->coach_step];
-    int end = st->start + st->count;
-    if (pb->queued_pos < end) {
+    if (pb->queued_pos < pb->coach_target) {
         enqueue(pb, pb->sol.moves[pb->queued_pos++], false, 1);
         return;
     }
     if (pb->coach_sub == COACH_STEP_DEMO) {
         pb->coach_sub = COACH_STEP_SHOWN;
-        set_playhead(pb, st->start); /* the demonstration rewinds: the physical cube is still at the start */
+        set_playhead(pb, pb->coach_origin);
         return;
     }
-    /* followed: the screen now shows the Step done, which the user is assumed to match */
-    int next = next_step_with_moves(pb, pb->coach_step);
     pb->coach_basis = COACH_BASIS_ASSUMED;
     pb->coach_sub = COACH_STEP_HIDDEN;
-    if (next < 0) {
-        pb->coach = COACH_DONE;
-        pb->coach_step = -1;
-    } else {
-        pb->coach_step = next;
-    }
+    coach_ready(pb);
 }
 
 void playback_init(Playback *pb) {
@@ -139,7 +139,7 @@ PlaybackView playback_view(const Playback *pb) {
     return v;
 }
 
-void playback_tick(Playback *pb, float dt, float turn_seconds) {
+void playback_tick(Playback *pb, float dt, float turn_seconds, float fast_seconds) {
     for (int guard = 0; guard < 2 * SOL_MAX_MOVES + PLAYBACK_QUEUE_MAX; guard++) {
         if (!pb->animating) {
             if (pb->qhead == pb->qtail && coach_running(pb)) coach_drive(pb);
@@ -150,7 +150,7 @@ void playback_tick(Playback *pb, float dt, float turn_seconds) {
             pb->animating = true;
             pb->anim_t = 0;
         }
-        float secs = turn_seconds_for(&pb->anim, turn_seconds);
+        float secs = turn_seconds_for(&pb->anim, turn_seconds, fast_seconds);
         if (secs > 0) {
             pb->anim_t += dt / secs;
             if (pb->anim_t < 1) return;
@@ -283,6 +283,7 @@ bool playback_coach_start(Playback *pb) {
     pb->coach_step = st;
     pb->coach_sub = COACH_STEP_HIDDEN;
     set_playhead(pb, pb->sol.steps[st].start);
+    coach_ready(pb);
     return true;
 }
 
@@ -292,12 +293,16 @@ void playback_coach_show(Playback *pb, bool on) {
 
 void playback_coach_demo(Playback *pb) {
     if (!coach_free(pb)) return;
-    set_playhead(pb, pb->sol.steps[pb->coach_step].start);
+    pb->coach_origin = pb->playhead;
+    const SolveStep *st = &pb->sol.steps[pb->coach_step];
+    pb->coach_target = st->start + st->count;
     pb->coach_sub = COACH_STEP_DEMO;
 }
 
 void playback_coach_followed(Playback *pb) {
     if (pb->coach != COACH_PRACTICE || pb->coach_sub != COACH_STEP_SHOWN) return;
+    const SolveStep *st = &pb->sol.steps[pb->coach_step];
+    pb->coach_target = st->start + st->count;
     pb->coach_sub = COACH_STEP_FOLLOW;
 }
 
@@ -311,7 +316,7 @@ void playback_coach_restore(Playback *pb) {
     if (pb->coach != COACH_UNSYNCED) return;
     pb->coach = COACH_PRACTICE;
     pb->coach_sub = COACH_STEP_HIDDEN;
-    set_playhead(pb, pb->sol.steps[pb->coach_step].start);
+    set_playhead(pb, pb->playhead);
 }
 
 void playback_coach_repaint(Playback *pb) {
@@ -324,25 +329,26 @@ void playback_coach_repaint(Playback *pb) {
 void playback_coach_trust(Playback *pb, const Move *m, int n) {
     if (pb->coach != COACH_UNSYNCED) return;
     playback_coach_repaint(pb); /* the typed moves change the cube, so the Solution is re-planned */
-    for (int i = 0; i < n; i++)
-        if (!move_is_rotation(m[i])) cube_apply(&pb->cube, m[i]); /* rotations are view turns: not sync */
+    cube_apply_seq(&pb->cube, m, n);
 }
 
 CoachTyped playback_coach_typed(Playback *pb, const Move *m, int n) {
     if (!coach_free(pb)) return COACH_TYPED_IGNORED;
-    Move turns[256];
-    int k = 0;
-    for (int i = 0; i < n && k < 256; i++)
-        if (!move_is_rotation(m[i])) turns[k++] = m[i];
-    if (k == 0) return COACH_TYPED_IGNORED;
     const SolveStep *st = &pb->sol.steps[pb->coach_step];
-    bool same = k == st->count;
-    for (int i = 0; same && i < k; i++) same = turns[i] == pb->sol.moves[st->start + i];
-    if (!same) {
-        playback_coach_unsync(pb, true);
-        return COACH_TYPED_MISMATCH;
+    int end = st->start + st->count;
+    int pos = pb->playhead;
+    bool any = false;
+    for (int i = 0; i < n; i++) {
+        any = true;
+        if (pos == end || m[i] != pb->sol.moves[pos]) {
+            playback_coach_unsync(pb, true);
+            return COACH_TYPED_MISMATCH;
+        }
+        pos++;
     }
-    pb->coach_sub = COACH_STEP_FOLLOW; /* the screen plays the Step through, as after Mark as followed */
+    if (!any) return COACH_TYPED_IGNORED;
+    pb->coach_target = pos;
+    pb->coach_sub = COACH_STEP_FOLLOW;
     return COACH_TYPED_MATCH;
 }
 

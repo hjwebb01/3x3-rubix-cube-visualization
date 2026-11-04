@@ -22,7 +22,8 @@ typedef struct {
     /* the cube on screen, its turn queue, and the Solution being played */
     Playback pb;
 
-    int speed; /* index into SPEED_SECONDS */
+    int speed;          /* index into SPEED_SECONDS */
+    int scramble_speed; /* index into SPEED_SECONDS, for scramble turns */
     SolverId method;     /* the selected method, used by the next Solve */
     SolverId sol_method; /* the method that produced the current solution */
     bool teach;          /* the Pause to explain checkbox; pushed to pb when it changes */
@@ -45,6 +46,8 @@ typedef struct {
 
     /* typed moves */
     char input[256];
+    Move mismatched_moves[256];
+    int mismatched_count;
 
     /* sticker editing */
     bool edit_mode;
@@ -66,6 +69,7 @@ typedef struct {
     int focus;      /* the focused stop, 0 for none; the move input when it equals focus_input */
     int focus_n;    /* stops registered so far this frame */
     int focus_last; /* stops registered last frame */
+    bool focus_prompt_next;
     int focus_input; /* the move input's stop last frame */
     bool focus_ok[FOCUS_MAX + 1]; /* which stops were enabled last frame; Tab skips the rest */
 

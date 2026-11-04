@@ -136,11 +136,8 @@ static void *solve_worker(void *arg) {
 void app_start_solve(App *a) {
     if (!app_can_change_cube(a)) return;
     CoachMode mode = playback_view(&a->pb).coach.mode;
-    bool coaching = mode == COACH_SETUP || mode == COACH_REPAINT; /* the Solve starts practice, not playback */
-    if (coaching && a->method != SOLVER_BEGINNER && a->method != SOLVER_CFOP) {
-        app_set_status(a, true, "Coaching needs the Beginner or CFOP method");
-        return;
-    }
+    bool coaching = (mode == COACH_SETUP || mode == COACH_REPAINT) &&
+                    (a->method == SOLVER_BEGINNER || a->method == SOLVER_CFOP);
     playback_drop_solution(&a->pb);
     playback_flush(&a->pb);
     Cube cur = *playback_view(&a->pb).cube;
@@ -153,6 +150,7 @@ void app_start_solve(App *a) {
     if (coaching)
         playback_coach_set_basis(&a->pb, (mode == COACH_REPAINT || !app_guided_scramble(a)) ? COACH_BASIS_PAINTED
                                                                                            : COACH_BASIS_ASSUMED);
+    if (!coaching && mode != COACH_OFF) playback_coach_end(&a->pb);
     app_set_edit(a, false);
     a->can_undo = false;
     a->solve_input = cur;
@@ -300,7 +298,7 @@ void app_coach_unsync(App *a, bool attempted) {
 
 void app_coach_restore(App *a) {
     playback_coach_restore(&a->pb);
-    app_set_status(a, false, "You confirmed your physical cube is back at the step start");
+    app_set_status(a, false, "You confirmed your physical cube is back at the last accepted position");
 }
 
 void app_coach_repaint(App *a) {
@@ -336,7 +334,7 @@ static const struct {
 
 static void handle_keys(App *a) {
     bool prompt = ui_input_focused(a);
-    if (prompt && a->input[0]) return; /* an empty prompt still takes Space, the arrows and Esc */
+    if (a->input[0]) return; /* an empty prompt still takes Space, the arrows and Esc */
     bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
     bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
     if (!ctrl && !prompt) {
@@ -352,8 +350,9 @@ static void handle_keys(App *a) {
     if (IsKeyPressed(KEY_ESCAPE)) a->show_help = false;
     if (prompt) return;
     if (IsKeyPressed(KEY_V) && !a->input[0] && !ctrl) app_toggle_screen_only(a);
-    if (IsKeyPressed(KEY_MINUS) && a->speed > 0) a->speed--;
-    if (IsKeyPressed(KEY_EQUAL) && a->speed < NUM_SPEEDS - 1) a->speed++;
+    int *spd = shift ? &a->scramble_speed : &a->speed;
+    if (IsKeyPressed(KEY_MINUS) && *spd > 0) (*spd)--;
+    if (IsKeyPressed(KEY_EQUAL) && *spd < NUM_SPEEDS - 1) (*spd)++;
     if (IsKeyPressed(KEY_HOME)) playback_seek(&a->pb, 0);
     if (IsKeyPressed(KEY_END)) playback_seek(&a->pb, INT_MAX);
     if (IsKeyPressed(KEY_PAGE_UP)) playback_seek_step(&a->pb, -1);
@@ -552,6 +551,7 @@ int main(int argc, char **argv) {
     a->yaw_v = a->pitch_v = 0;
     a->dist = 10.5f;
     a->speed = 2;
+    a->scramble_speed = 4;
     a->method = SOLVER_CFOP;
     a->rng = (uint32_t)time(NULL) | 1u;
     app_set_status(a, false, "Scramble, turn with U R F D L B (Shift = prime), then Solve");
@@ -587,12 +587,13 @@ int main(int argc, char **argv) {
         float lw = screen_only ? 0 : stacked ? W / 2 : fmaxf(236, halves * 0.47f);
         float rw = screen_only ? 0 : stacked ? W - lw : fmaxf(260, halves - lw);
         float top_h = 44, prompt_h = 64, body_h = H - prompt_h;
-        bool coaching = playback_view(&a->pb).coach.mode != COACH_OFF;
+        CoachView coach = playback_view(&a->pb).coach;
+        bool coaching = coach.mode != COACH_OFF;
         float move_h = fminf(fmaxf(body_h * 0.16f, 104), 136);
-        if (coaching) move_h = stacked ? fminf(270, body_h * 0.4f) : 270; /* the Coach card and its buttons */
+        if (coaching) move_h = stacked ? (coach.locked ? fminf(270, body_h * 0.4f) : 0) : 270; /* the Coach card and its buttons */
         /* height of the left half. Stacked, it takes most of the height so the method grid clears the checkbox;
          * while coaching it holds only the net and the Stop button, so it takes less */
-        float lh = stacked ? body_h * (coaching ? 0.4f : 0.62f) : body_h;
+        float lh = stacked ? body_h * (coach.locked ? 0.4f : 0.62f) : body_h;
         float cx = stacked ? 0 : lw + rw + seam_w, cy = stacked ? lh + seam_w : 0; /* where the screen half starts */
         float tx = stacked ? 0 : 32;                                              /* top bar clears the seam's label */
         Rectangle left = {0, 0, lw, lh};
@@ -608,7 +609,7 @@ int main(int argc, char **argv) {
         handle_keys(a);
         handle_view_mouse(a, view);
         /* clamp: after an idle wait the frame time spans the whole pause */
-        playback_tick(&a->pb, fminf(GetFrameTime(), 0.05f), SPEED_SECONDS[a->speed]);
+        playback_tick(&a->pb, fminf(GetFrameTime(), 0.05f), SPEED_SECONDS[a->speed], SPEED_SECONDS[a->scramble_speed]);
 
         a->cursor = MOUSE_CURSOR_ARROW;
         BeginDrawing();
@@ -618,7 +619,7 @@ int main(int argc, char **argv) {
         /* drawn in Tab order: widgets take their Tab stops as they draw */
         if (!screen_only) ui_left_panel(a, left);
         ui_top_bar(a, top);
-        ui_move_display(a, move);
+        if (move.height > 0) ui_move_display(a, move);
         if (!screen_only) {
             ui_right_panel(a, right);
             ui_seam(a, seam); /* after the panels and top bar: its label overlaps them */

@@ -148,7 +148,7 @@ void ui_focus_keys(App *a) {
     a->focus_last = a->focus_n < FOCUS_MAX ? a->focus_n : FOCUS_MAX;
     a->focus_n = 0;
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) a->press_at = GetMousePosition();
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsKeyPressed(KEY_ESCAPE)) a->focus = 0; /* rings are for keyboard use */
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || (IsKeyPressed(KEY_ESCAPE) && !a->input[0])) a->focus = 0; /* rings are for keyboard use */
     if (IsKeyPressed(KEY_TAB) && a->focus_last > 0) {
         bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
         int f = a->focus;
@@ -183,7 +183,7 @@ bool ui_focus_stop(App *a, Rectangle r, float radius, bool enabled) {
     if (a->focus != id) return false;
     Rectangle ring = {r.x - 3, r.y - 3, r.width + 6, r.height + 6};
     DrawRectangleRoundedLinesEx(ring, corner(ring, radius + 3), 8, 2, UI_TEXT);
-    return enabled && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_SPACE));
+    return enabled && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || (IsKeyPressed(KEY_SPACE) && !a->input[0]));
 }
 
 bool ui_button(App *a, Rectangle r, const char *label, bool active, bool enabled) {
@@ -449,7 +449,7 @@ static bool coach_command(App *a, const char *w, const char *rest) {
     if (playback_view(&a->pb).coach.mode != COACH_UNSYNCED) return false;
     if (!strcmp(w, "fix")) {
         app_coach_restore(a);
-        app_set_status(a, false, "Undid your move: back at the step start");
+        a->mismatched_count = 0;
         return true;
     }
     if (!strcmp(w, "paint")) {
@@ -462,9 +462,11 @@ static bool coach_command(App *a, const char *w, const char *rest) {
     }
     if (!strcmp(w, "trust")) {
         Move mv[256];
-        int n = moves_parse(rest, mv, 256);
-        if (n <= 0) return false; /* no move typed: the usual "Unable to read" tells the user */
-        app_coach_trust(a, mv, n);
+        while (isspace((unsigned char)*rest)) rest++;
+        int n = *rest ? moves_parse(rest, mv, 256) : a->mismatched_count;
+        if (n <= 0) return false;
+        app_coach_trust(a, *rest ? mv : a->mismatched_moves, n);
+        a->mismatched_count = 0;
         return true;
     }
     return false;
@@ -493,11 +495,13 @@ static bool prompt_command(App *a, const char *text) {
     for (size_t i = 0; i < sizeof WORDS / sizeof WORDS[0]; i++) {
         if (strcmp(w, WORDS[i].word)) continue;
         if (WORDS[i].method >= 0) {
+            if (app_busy(a)) return true;
+            if (playback_view(&a->pb).coach.locked) playback_coach_end(&a->pb);
             a->method = (SolverId)WORDS[i].method;
             if (!strcmp(w, "show") && thistle_word(text + used)) a->method = SOLVER_THISTLETHWAITE;
             bool idle = !app_busy(a);
             app_start_solve(a);
-            if (idle && app_busy(a) && !strcmp(w, "teach")) a->xray = true; /* Coach: teach highlights each Step's pieces */
+            if (idle && app_busy(a)) a->xray = !strcmp(w, "teach"); /* Coach: teach highlights each Step's pieces */
         } else if (!strcmp(w, "solve")) app_start_solve(a);
         else if (!strcmp(w, "scramble")) app_scramble(a);
         else if (!strcmp(w, "reset")) app_reset(a);
@@ -512,18 +516,20 @@ static bool prompt_command(App *a, const char *text) {
 /* Typed moves while a Step is practised: they are checked against the Step, never applied to the screen. */
 static void coach_typed(App *a, const Move *mv, int n) {
     if (playback_view(&a->pb).coach.mode == COACH_UNSYNCED) {
-        app_set_status(a, true, "Fix the seam first: fix, trust MOVES, or paint top");
+        app_set_status(a, true, "Fix the seam first: fix, trust, or paint top");
         return; /* the input stays for the user to retype after fixing */
     }
     CoachTyped r = playback_coach_typed(&a->pb, mv, n);
     if (r == COACH_TYPED_IGNORED) {
-        app_set_status(a, true, "Type the Step's moves: rotations alone are not checked");
+        app_set_status(a, true, "Enter moves after the current animation finishes");
         return;
     }
+    a->mismatched_count = r == COACH_TYPED_MISMATCH ? n : 0;
+    if (a->mismatched_count) memcpy(a->mismatched_moves, mv, (size_t)n * sizeof *mv);
     a->input[0] = 0;
     a->input_bad = false;
-    if (r == COACH_TYPED_MATCH) app_set_status(a, false, "Your moves match the Step: the screen plays it through");
-    else app_set_status(a, false, "Your moves differ from the Step: fix, trust MOVES, or paint top");
+    if (r == COACH_TYPED_MATCH) app_set_status(a, false, "Your moves match: the screen follows your progress");
+    else app_set_status(a, false, "Your moves differ from the Step: fix, trust, or paint top");
 }
 
 /* The prompt: typed moves or a command word, with its Apply button. Open unless the Solver runs or a Step is
@@ -533,6 +539,8 @@ static void move_input(App *a, Rectangle r, Rectangle apply_btn) {
     bool enabled = !app_busy(a) && !playback_view(&a->pb).coach.running;
     ui_focus_stop(a, r, 6, enabled); /* Enter here submits the moves, below */
     a->focus_input = a->focus_n;
+    if (enabled && a->focus_prompt_next) a->focus = a->focus_input;
+    a->focus_prompt_next = false;
     /* a click inside takes focus (ui_focus_keys already dropped it for any click) */
     if (enabled && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(m, r)) a->focus = a->focus_input;
     if (!enabled && ui_input_focused(a)) a->focus = 0;
@@ -691,47 +699,66 @@ void ui_left_panel(App *a, Rectangle r) {
     bool can_edit = app_can_change_cube(a); /* while a Step is practised the physical cube is the one that changes */
     float half = (w - 8) / 2;
 
-    ui_text_face(a, TYPE_SEMIBOLD, "Rubik's Cube Solver", x, y, 20, UI_TEXT);
-    y += 34;
+    PlaybackView initial = playback_view(&a->pb);
+    bool open = cv.mode == COACH_OFF && !initial.sol && !initial.sealed && !a->edit_mode;
+    bool compact = r.height < 500;
+    if (!compact) {
+        ui_text_face(a, TYPE_SEMIBOLD, "Rubik's Cube Solver", x, y, 20, UI_TEXT);
+        y += 34;
+    }
 
     /* while a Step is practised the setup and method controls can't be used, so they make way for the net */
-    if (!cv.locked) {
-        section(a, "SET UP THE CUBE", x, &y);
-        Rectangle scramble_r = {x, y, half, 34}, reset_r = {x + half + 8, y, half, 34};
-        if (!can_edit) tip_at(scramble_r, "Wait for the solver to finish."), tip_at(reset_r, "Wait for the solver to finish.");
-        if (ui_button(a, scramble_r, "Scramble", false, can_edit)) app_scramble(a);
-        if (ui_button(a, reset_r, "Reset", false, can_edit)) app_reset(a);
-        y += 42;
-        PlaybackView orientation = playback_view(&a->pb);
-        for (int row = 0; row < 2; row++) {
-            int front = cube_center(orientation.cube, FACE_F);
-            int top = cube_center(orientation.cube, FACE_U);
-            char label[64];
-            snprintf(label, sizeof label, "%s: %s", row ? "Top" : "Front",
-                     COLOR_NAMES[row ? top : front]);
-            Rectangle or_r = {x + row * (half + 8), y, half, 30};
-            bool or_ok = can_edit && orientation.idle && cv.mode == COACH_OFF;
-            if (!or_ok)
-                tip_at(or_r, !can_edit              ? "Wait for the solver to finish."
-                                   : cv.mode != COACH_OFF ? "Stop coaching to change the orientation."
-                                                          : "Wait for the turns to finish.");
-            if (ui_button(a, or_r, label, false, or_ok)) {
-                for (int step = 1; step < NUM_COLORS; step++) {
-                    int color = ((row ? top : front) + step) % NUM_COLORS;
-                    Cube candidate = *orientation.cube;
-                    if (cube_orient(&candidate, row ? front : color, row ? color : top)) {
-                        app_orient(a, row ? front : color, row ? color : top);
-                        break;
+    if (!cv.locked && !(compact && open)) {
+        if (!compact) section(a, "SET UP THE CUBE", x, &y);
+        if (!compact || cv.mode == COACH_OFF) {
+            Rectangle scramble_r = {x, y, half, 34}, reset_r = {x + half + 8, y, half, 34};
+            if (!can_edit) tip_at(scramble_r, "Wait for the solver to finish."), tip_at(reset_r, "Wait for the solver to finish.");
+            if (ui_button(a, scramble_r, "Scramble", false, can_edit)) app_scramble(a);
+            if (ui_button(a, reset_r, "Reset", false, can_edit)) app_reset(a);
+            y += compact ? 38 : 42;
+            if (!compact) { /* scramble speed; Shift - = step it too */
+                if (ui_button(a, (Rectangle){x, y, 28, 28}, "\xE2\x88\x92", false, a->scramble_speed > 0)) a->scramble_speed--;
+                char sl[48];
+                snprintf(sl, sizeof sl, "Scramble: %s", SPEED_NAMES[a->scramble_speed]);
+                float sw = ui_text_width_face(a, TYPE_MEDIUM, sl, 13);
+                ui_text_face(a, TYPE_MEDIUM, sl, x + (w - sw) / 2, y + 7, 13, UI_TEXT);
+                if (ui_button(a, (Rectangle){x + w - 28, y, 28, 28}, "+", false, a->scramble_speed < NUM_SPEEDS - 1))
+                    a->scramble_speed++;
+                y += 36;
+            }
+        }
+        if (!compact || (cv.mode == COACH_OFF && !a->edit_mode)) {
+            PlaybackView orientation = playback_view(&a->pb);
+            for (int row = 0; row < 2; row++) {
+                int front = cube_center(orientation.cube, FACE_F);
+                int top = cube_center(orientation.cube, FACE_U);
+                char label[64];
+                snprintf(label, sizeof label, "%s: %s", row ? "Top" : "Front",
+                         COLOR_NAMES[row ? top : front]);
+                Rectangle or_r = {x + row * (half + 8), y, half, 30};
+                bool or_ok = can_edit && orientation.idle && cv.mode == COACH_OFF;
+                if (!or_ok)
+                    tip_at(or_r, !can_edit              ? "Wait for the solver to finish."
+                                       : cv.mode != COACH_OFF ? "Stop coaching to change the orientation."
+                                                              : "Wait for the turns to finish.");
+                if (ui_button(a, or_r, label, false, or_ok)) {
+                    for (int step = 1; step < NUM_COLORS; step++) {
+                        int color = ((row ? top : front) + step) % NUM_COLORS;
+                        Cube candidate = *orientation.cube;
+                        if (cube_orient(&candidate, row ? front : color, row ? color : top)) {
+                            app_orient(a, row ? front : color, row ? color : top);
+                            break;
+                        }
                     }
                 }
             }
+            y += compact ? 34 : 36;
         }
-        y += 36;
 
         if (a->edit_mode) {
             if (ui_button(a, (Rectangle){x, y, half, 32}, "Done painting", false, true)) app_set_edit(a, false);
             if (ui_button(a, (Rectangle){x + half + 8, y, half, 32}, "Check cube", false, true)) app_check_cube(a);
-            y += 40;
+            y += compact ? 36 : 40;
             float sw = (w - 5 * 6) / 6;
             for (int c = 0; c < NUM_COLORS; c++) {
                 Rectangle s = {x + c * (sw + 6), y, sw, 26};
@@ -743,18 +770,22 @@ void ui_left_panel(App *a, Rectangle r) {
                     if (ui_clicked(a, s)) a->paint_color = c;
                 }
             }
-            y += 34;
+            y += compact ? 30 : 34;
         } else {
             Rectangle paint_r = {x, y, w, 32};
             if (!can_edit) tip_at(paint_r, "Wait for the solver to finish.");
             if (ui_button(a, paint_r, "Paint stickers", false, can_edit)) app_set_edit(a, true);
-            y += 42;
+            y += compact ? 36 : 42;
         }
     }
     PlaybackView pv = playback_view(&a->pb);
-    if (cv.mode == COACH_OFF && !pv.sol && !pv.sealed) {
+    if (cv.mode == COACH_OFF && !pv.sol && !pv.sealed && !a->edit_mode) {
         /* the open seam: the two ways in. A scramble is handed out as a guided one, for the user's own cube */
-        if (ui_button(a, (Rectangle){x, y, w, 32}, "I have a cube", false, !busy)) app_coach_toggle(a);
+        if (ui_button(a, (Rectangle){x, y, w, 32}, "I have a cube", false, !busy)) {
+            app_coach_toggle(a);
+            app_set_edit(a, true);
+            a->focus_prompt_next = true;
+        }
         y += 40;
         if (ui_button(a, (Rectangle){x, y, w, 32}, "Give me a scramble", false, can_edit)) {
             app_coach_toggle(a);
@@ -765,7 +796,7 @@ void ui_left_panel(App *a, Rectangle r) {
         if (ui_button(a, (Rectangle){x, y, w, 32}, cv.mode == COACH_OFF ? "Coach me on my cube" : "Stop coaching", false,
                       !busy))
             app_coach_toggle(a);
-        y += 42;
+        y += compact ? 34 : 42;
     }
 
     /* the method block and Solve sit at the bottom; the net fills the gap above them */
@@ -773,15 +804,16 @@ void ui_left_panel(App *a, Rectangle r) {
     method_summary(solver_description(a->method), summary, sizeof summary);
     float desc_h = r.height < 700 ? 0 : text_wrapped(a, summary, x, 0, w, 13, UI_TERTIARY, false);
     float solve_helper_y = r.y + r.height - PAD - 16;
-    float solve_y = solve_helper_y - 8 - 44;
-    float xray_y = solve_y - 12 - 30;
-    float teach_y = xray_y - 30;
+    float solve_h = compact ? 36 : 44, check_h = compact ? 24 : 30;
+    float solve_y = solve_helper_y - 8 - solve_h;
+    float xray_y = solve_y - (compact ? 8 : 12) - check_h;
+    float teach_y = xray_y - check_h;
     float method_pitch = r.height < 700 ? 28 : 36;
     float methods_y = cv.locked ? teach_y - 8 : teach_y - 16 - (20 + SOLVER_COUNT * method_pitch + (desc_h > 0 ? 8 + desc_h : -4));
     int method_cols = 1;
-    if (!cv.locked && methods_y < y) {
+    if (!cv.locked && (compact || methods_y < y)) {
         /* short window: the list goes in a 2-column grid right under the setup block */
-        methods_y = y;
+        methods_y = compact ? teach_y - 8 - ((SOLVER_COUNT + 1) / 2) * method_pitch : y;
         desc_h = 0;
         method_cols = 2;
     }
@@ -800,7 +832,7 @@ void ui_left_panel(App *a, Rectangle r) {
 
     y = methods_y;
     if (!cv.locked) {
-        section(a, "CHOOSE A METHOD", x, &y);
+        if (!compact) section(a, "CHOOSE A METHOD", x, &y);
         float cw = (w - (method_cols - 1) * 8) / method_cols;
         for (int i = 0; i < SOLVER_COUNT; i++) {
             float cx = x + (i % method_cols) * (cw + 8), cy = y + (i / method_cols) * method_pitch;
@@ -811,15 +843,15 @@ void ui_left_panel(App *a, Rectangle r) {
         if (desc_h > 0) text_wrapped(a, summary, x, y, w, 13, UI_TERTIARY, true);
     }
 
-    if (checkbox(a, (Rectangle){x, teach_y, w, 30}, "Pause to explain each step", a->teach)) {
+    if (checkbox(a, (Rectangle){x, teach_y, w, check_h}, "Pause to explain each step", a->teach)) {
         a->teach = !a->teach;
         playback_set_teach(&a->pb, a->teach);
     }
-    if (checkbox(a, (Rectangle){x, xray_y, w, 30}, "Highlight each step's pieces", a->xray)) a->xray = !a->xray;
+    if (checkbox(a, (Rectangle){x, xray_y, w, check_h}, "Highlight each step's pieces", a->xray)) a->xray = !a->xray;
     bool has_sol = playback_view(&a->pb).sol != NULL;
     const char *solve_label = busy ? "Solving\xE2\x80\xA6" : (has_sol ? "Solve again" : "Solve");
     /* once there is a solution, Play is the next action and takes the accent */
-    if (ui_button(a, (Rectangle){x, solve_y, w, 44}, solve_label, !busy && !has_sol, can_edit)) app_start_solve(a);
+    if (ui_button(a, (Rectangle){x, solve_y, w, solve_h}, solve_label, !busy && !has_sol, can_edit)) app_start_solve(a);
     const char *helper;
     if (busy)
         helper = "";
@@ -954,11 +986,11 @@ static void coach_card(App *a, Rectangle card, const PlaybackView *v) {
         snprintf(cap, sizeof cap, "STEP %d OF %d", v->step.k, v->step.total);
         snprintf(headline, sizeof headline, "%s", s->steps[c->step].name);
         if (c->hidden) {
-            snprintf(body, sizeof body, "Work out this step on your cube. The moves stay hidden until you show them.");
+            snprintf(body, sizeof body, "Work out this step on your cube. Show moves to see any required cube rotations.");
         } else {
             const SolveStep *st = &s->steps[c->step];
             join_moves(a, s, st->start, st->start + st->count, moves, sizeof moves);
-            snprintf(body, sizeof body, "Follow the moves in the solution panel, then press Mark as followed.");
+            snprintf(body, sizeof body, "Follow the moves, including cube rotations, then press Mark as followed.");
         }
         if (c->basis == COACH_BASIS_PAINTED) snprintf(status, sizeof status, "This cube passed the check.");
         break;
@@ -1078,7 +1110,7 @@ void ui_help_overlay(App *a, Rectangle view) {
         "Space   play / pause",
         "H   highlight the current step's pieces",
         "Left / Right   step,  Home / End   jump",
-        "-  =   slower / faster",
+        "-  =   slower / faster,  Shift   scramble speed",
         "PgUp / PgDn   previous / next step",
         "Ctrl+S   scramble,  Ctrl+Z   undo Scramble or Reset",
         "Tab   move between controls,  Enter   press",
@@ -1350,6 +1382,10 @@ void ui_right_panel(App *a, Rectangle r) {
     }
 
     PlaybackView v = playback_view(&a->pb);
+    if (r.height < 500 && v.coach.mode != COACH_OFF && !v.coach.locked) {
+        coach_card(a, (Rectangle){r.x, y, r.width, r.height - (y - r.y)}, &v);
+        return;
+    }
     if (!v.sol) {
         y += text_wrapped(a, "Scramble the cube, or paint a state, choose a method and press Solve.", x, y, w, 14,
                           UI_SECONDARY, true) + 16;
