@@ -1,8 +1,8 @@
 # Improving the raylib renderer
 
-Research date: 2026-10-10. Recommendations concern this application's renderer, not changes to raylib itself. Official sources below are pinned to raylib 5.5, the version fetched by CMake when a system installation is unavailable. CMake also accepts an installed raylib >= 5.0; check the actual linked version when validating.
+Historical baseline, dated 2026-10-10: the findings below describe the renderer before the shader and rounded-mesh work was implemented. Research date: 2026-10-10. Recommendations concern this application's renderer, not changes to raylib itself. Official sources below are pinned to raylib 5.5, the version fetched by CMake when a system installation is unavailable. CMake also accepts an installed raylib >= 5.0; check the actual linked version when validating.
 
-## Current repository findings
+## Baseline repository findings
 
 `apps/gui/render.c` draws 27 sharp `DrawCube` bodies and 54 flat immediate-mode sticker quads. It uses raylib's default shader, so the existing dark bodies do not have directional lighting or material highlights. Stickers emit no normals. Layer turns use `rlPushMatrix`/`rlRotatef`, sharing the move geometry and smoothstep timing with the solver animation. The view has a custom projection and framebuffer viewport, then restores state for 2D controls. The 2D net already has rounded stickers.
 

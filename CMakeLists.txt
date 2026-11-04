@@ -13,11 +13,14 @@ option(RUBIKS_BUILD_GUI "Build the raylib GUI (downloads raylib if not installed
 set(RUBIKS_WARNINGS -Wall -Wextra -Wshadow -Wno-missing-field-initializers)
 
 # ---- core library: cube model + all solvers ----
+find_package(Threads REQUIRED)
 add_library(cubecore STATIC
   src/cube.c
   src/cubie.c
   src/solution.c
+  src/chunks.c
   src/lessons.c
+  src/focus.c
   src/solvers/common.c
   src/solvers/beginner.c
   src/solvers/cfop.c
@@ -27,7 +30,7 @@ add_library(cubecore STATIC
 )
 target_include_directories(cubecore PUBLIC include PRIVATE src)
 target_compile_options(cubecore PRIVATE ${RUBIKS_WARNINGS})
-target_link_libraries(cubecore PUBLIC m)
+target_link_libraries(cubecore PUBLIC Threads::Threads)
 
 # ---- command line ----
 add_executable(rubik apps/cli.c)
@@ -36,8 +39,8 @@ target_link_libraries(rubik PRIVATE cubecore)
 
 # ---- tests ----
 enable_testing()
-add_executable(rubik_tests tests/test_main.c)
-target_include_directories(rubik_tests PRIVATE src)
+add_executable(rubik_tests tests/test_main.c tests/test_playback.c apps/gui/playback.c)
+target_include_directories(rubik_tests PRIVATE src apps/gui)
 target_compile_options(rubik_tests PRIVATE ${RUBIKS_WARNINGS})
 target_link_libraries(rubik_tests PRIVATE cubecore)
 add_test(NAME rubik_tests COMMAND rubik_tests)
@@ -56,9 +59,9 @@ if(RUBIKS_BUILD_GUI)
     FetchContent_MakeAvailable(raylib)
   endif()
   find_package(Threads REQUIRED)
-  add_executable(rubik_gui apps/gui/main.c apps/gui/render.c apps/gui/ui.c)
+  add_executable(rubik_gui apps/gui/main.c apps/gui/render.c apps/gui/ui.c apps/gui/playback.c)
   target_compile_options(rubik_gui PRIVATE ${RUBIKS_WARNINGS})
-  target_link_libraries(rubik_gui PRIVATE cubecore raylib Threads::Threads)
+  target_link_libraries(rubik_gui PRIVATE cubecore raylib m Threads::Threads)
   # the UI loads IBM Plex from fonts/ next to the executable
   add_custom_command(TARGET rubik_gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

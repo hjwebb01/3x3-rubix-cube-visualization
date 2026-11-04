@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake:*)", "Bash(ctest:*)", "Bash(./build/:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git --no-pager:*)",
+      "Bash(rg:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "cd \"$CLAUDE_PROJECT_DIR\" && [ -d build ] && cmake --build build -j >/dev/null 2>&1 && ctest --test-dir build -Q >/dev/null 2>&1 || { echo 'build or ctest failing' >&2; exit 2; }" }] }]
+  }
+}

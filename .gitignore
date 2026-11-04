@@ -1,2 +1,4 @@
 build/
-*.png
+/.cache/
+/shot.png
+*.o

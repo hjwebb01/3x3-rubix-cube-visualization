@@ -1,5 +1,6 @@
 /* 3D cube rendering (with layer-turn animation) and the 2D facelet net. */
 #include <math.h>
+#include <string.h>
 
 #include "gui.h"
 #include "raymath.h"
@@ -14,6 +15,7 @@
 #define STICKER_CORNER 0.09f
 #define STICKER_CORNER_STEPS 5
 #define BODY_COLOR ((Color){30, 30, 34, 255})
+#define FADED_COLOR ((Color){56, 58, 64, 255}) /* X-ray: a sticker the current Step ignores */
 
 static Vector3 g_pos[NUM_FACELETS], g_normal[NUM_FACELETS];
 static int g_ipos[NUM_FACELETS][3];
@@ -222,12 +224,12 @@ static float ease(float t) {
     return t * t * (3 - 2 * t);
 }
 
-static void push_layer_rotation(const App *a, const int pos[3]) {
+static void push_layer_rotation(const PlaybackView *v, const int pos[3]) {
     rlPushMatrix();
-    if (!a->animating || !move_affects(a->anim.m, pos)) return;
+    if (!v->turning || !move_affects(v->turn, pos)) return;
     int axis, mask, quarter;
-    move_geometry(a->anim.m, &axis, &mask, &quarter);
-    float angle = 90.0f * (float)quarter * ease(a->anim_t);
+    move_geometry(v->turn, &axis, &mask, &quarter);
+    float angle = 90.0f * (float)quarter * ease(v->turn_t);
     rlRotatef(angle, axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f);
 }
 
@@ -245,6 +247,28 @@ static void draw_sticker_outline(int i, Color col) {
     sticker_quad(i, q, STICKER_HALF + 0.03f);
     Vector3 lift = Vector3Scale(g_normal[i], 0.004f);
     for (int k = 0; k < 4; k++) DrawLine3D(Vector3Add(q[k], lift), Vector3Add(q[(k + 1) % 4], lift), col);
+}
+
+/* X-ray tier of each sticker on screen: everything is XRAY_FOCUS unless X-ray is on and a Step is showing. */
+static void xray_tiers(const App *a, const PlaybackView *v, uint8_t out[NUM_FACELETS]) {
+    if (!a->xray || a->edit_mode || v->step.step < 0) {
+        memset(out, XRAY_FOCUS, NUM_FACELETS);
+        return;
+    }
+    const SolveStep *st = &v->sol->steps[v->step.step];
+    Cube start = *v->sol_start;
+    cube_apply_seq(&start, v->sol->moves, st->start);
+    focus_xray(st->focus, &start, v->cube, out);
+}
+
+/* Solved-before-the-Step stickers keep a hint of their color, so you can watch them leave and come back. */
+static Color sticker_color(int color, uint8_t tier) {
+    Color c = STICKER_COLORS[color];
+    if (tier == XRAY_FOCUS) return c;
+    if (tier == XRAY_FADED) return FADED_COLOR;
+    float t = 0.7f;
+    return (Color){(unsigned char)(c.r + (FADED_COLOR.r - c.r) * t), (unsigned char)(c.g + (FADED_COLOR.g - c.g) * t),
+                   (unsigned char)(c.b + (FADED_COLOR.b - c.b) * t), 255};
 }
 
 int render_pick_sticker(App *a, Rectangle view, Vector2 mouse) {
@@ -290,6 +314,9 @@ void render_cube3d(App *a, Rectangle view) {
     rlMultMatrixf(MatrixToFloat(look));
     rlEnableDepthTest();
 
+    PlaybackView v = playback_view(&a->pb);
+    uint8_t tier[NUM_FACELETS];
+    xray_tiers(a, &v, tier);
     int hover = a->edit_mode ? render_pick_sticker(a, view, GetMousePosition()) : -1;
     if (hover >= 0 && hover % 9 != 4) a->cursor = MOUSE_CURSOR_POINTING_HAND;
 
@@ -298,7 +325,7 @@ void render_cube3d(App *a, Rectangle view) {
         for (int y = -1; y <= 1; y++)
             for (int z = -1; z <= 1; z++) {
                 int p[3] = {x, y, z};
-                push_layer_rotation(a, p);
+                push_layer_rotation(&v, p);
                 if (g_lit_ready)
                     draw_lit(g_body_mesh, MatrixTranslate((float)x, (float)y, (float)z), BODY_COLOR);
                 else
@@ -310,8 +337,8 @@ void render_cube3d(App *a, Rectangle view) {
     /* stickers */
     if (!g_lit_ready) rlDisableBackfaceCulling();
     for (int i = 0; i < NUM_FACELETS; i++) {
-        push_layer_rotation(a, g_ipos[i]);
-        Color col = STICKER_COLORS[a->cube.f[i]];
+        push_layer_rotation(&v, g_ipos[i]);
+        Color col = sticker_color(v.cube->f[i], tier[i]);
         if (i == hover && i % 9 != 4) col = ColorBrightness(col, 0.25f);
         if (g_lit_ready)
             draw_lit(g_sticker_mesh, sticker_matrix(i), col);
@@ -320,7 +347,7 @@ void render_cube3d(App *a, Rectangle view) {
         rlPopMatrix();
     }
     if (!g_lit_ready) rlEnableBackfaceCulling();
-    if (hover >= 0) draw_sticker_outline(hover, hover % 9 == 4 ? UI_DIM : UI_ACCENT);
+    if (hover >= 0) draw_sticker_outline(hover, hover % 9 == 4 ? UI_TERTIARY : UI_ACCENT);
 
     rlDrawRenderBatchActive();
     rlMatrixMode(RL_PROJECTION);
@@ -349,41 +376,51 @@ void render_cube3d(App *a, Rectangle view) {
         float len = Vector2Length(d);
         /* a face turned straight at the camera has no side to label from; the net names it instead */
         if (len < radius * 0.15f) continue;
-        Vector2 sp = Vector2Add(c0, Vector2Scale(d, (radius + 18) / len));
-        Color c = Fade(UI_DIM, fminf(1.0f, (facing - 0.15f) * 3) * fminf(1.0f, (len / radius - 0.15f) * 6));
-        float w = ui_text_width(a, LETTERS[f], 22);
-        ui_text(a, LETTERS[f], view.x + sp.x - w / 2, view.y + sp.y - 11, 22, c);
+        Vector2 sp = Vector2Add(c0, Vector2Scale(d, (radius + 10) / len));
+        /* keep the letter inside the view, clear of the panels around it */
+        sp.x = Clamp(sp.x, 12, view.width - 12);
+        sp.y = Clamp(sp.y, 10, view.height - 10);
+        Color c = Fade(UI_TERTIARY, fminf(1.0f, (facing - 0.15f) * 3) * fminf(1.0f, (len / radius - 0.15f) * 6));
+        float w = ui_text_width_face(a, TYPE_SEMIBOLD, LETTERS[f], 17);
+        ui_text_face(a, TYPE_SEMIBOLD, LETTERS[f], view.x + sp.x - w / 2, view.y + sp.y - 8.5f, 17, c);
     }
 }
 
-void render_net(App *a, Rectangle area, int *hover_out) {
+void render_net(App *a, Rectangle area) {
     static const int ORIGIN[NUM_FACES][2] = {{3, 0}, {6, 3}, {3, 3}, {3, 6}, {0, 3}, {9, 3}}; /* U R F D L B */
     float cell = fminf(area.width / 12.0f, area.height / 9.0f);
     float ox = area.x + (area.width - cell * 12) / 2, oy = area.y + (area.height - cell * 9) / 2;
     Vector2 mouse = GetMousePosition();
+    PlaybackView v = playback_view(&a->pb);
+    const Cube *cube = v.cube;
+    uint8_t tier[NUM_FACELETS];
+    xray_tiers(a, &v, tier);
     int hover = -1;
+    Rectangle rects[NUM_FACELETS];
     for (int i = 0; i < NUM_FACELETS; i++) {
         int f = i / 9, r = i % 9 / 3, c = i % 3;
-        Rectangle rc = {ox + (ORIGIN[f][0] + c) * cell, oy + (ORIGIN[f][1] + r) * cell, cell, cell};
+        Rectangle rc = rects[i] = (Rectangle){ox + (ORIGIN[f][0] + c) * cell, oy + (ORIGIN[f][1] + r) * cell, cell, cell};
         Rectangle inner = {rc.x + 1, rc.y + 1, rc.width - 2, rc.height - 2};
         bool over = CheckCollisionPointRec(mouse, rc);
         if (over) hover = i;
-        Color col = STICKER_COLORS[a->cube.f[i]];
+        Color col = sticker_color(cube->f[i], tier[i]);
         DrawRectangleRec(rc, (Color){12, 12, 14, 255});
         DrawRectangleRounded(inner, 0.25f, 4, (a->edit_mode && over && r * 3 + c != 4) ? ColorBrightness(col, 0.25f) : col);
         if (i % 9 == 4) {
             /* the centre sticker names its face, so the net reads without the 3D view */
             char letter[2] = {"URFDLB"[f], 0};
-            float size = cell * 0.5f;
+            float size = fmaxf(cell * 0.6f, 12); /* 12 px floor at the minimum window */
             float lum = 0.299f * col.r + 0.587f * col.g + 0.114f * col.b;
-            Color ink = lum > 150 ? UI_INK : UI_TEXT;
+            Color ink = lum > 100 ? UI_INK : UI_TEXT; /* green and orange need dark ink for 4.5:1 */
             float lw = ui_text_width_face(a, TYPE_SEMIBOLD, letter, size);
             ui_text_face(a, TYPE_SEMIBOLD, letter, rc.x + (cell - lw) / 2, rc.y + (cell - size) / 2, size, ink);
         }
     }
-    if (a->edit_mode && hover >= 0 && hover % 9 != 4) {
-        a->cursor = MOUSE_CURSOR_POINTING_HAND;
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) a->cube.f[hover] = (uint8_t)a->paint_color;
+    if (!a->edit_mode) return;
+    if (hover >= 0 && hover % 9 != 4) a->cursor = MOUSE_CURSOR_POINTING_HAND;
+    /* every sticker but the centres is a Tab stop, so painting works without a mouse; after drawing, so the ring is on top */
+    for (int i = 0; i < NUM_FACELETS; i++) {
+        if (i % 9 == 4) continue;
+        if (ui_focus_stop(a, rects[i], 2, true) || ui_clicked(a, rects[i])) app_paint_sticker(a, i);
     }
-    if (hover_out) *hover_out = hover;
 }

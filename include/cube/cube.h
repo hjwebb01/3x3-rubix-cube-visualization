@@ -57,6 +57,8 @@ typedef uint8_t Move;
 void cube_init(void);
 
 void cube_reset(Cube *c);
+/* Reorient without changing the puzzle. Invalid front/top pairs leave c unchanged. */
+bool cube_orient(Cube *c, int front, int top);
 void cube_apply(Cube *c, Move m);
 void cube_apply_seq(Cube *c, const Move *seq, int n);
 bool cube_is_solved(const Cube *c); /* every face a single color (any orientation) */
@@ -93,6 +95,9 @@ void scramble_generate(Move *out, int n, uint32_t *rng);
 /* 54-char facelet string. Accepts face letters (URFDLB) or color letters (WRGYOB). */
 int cube_from_string(Cube *c, const char *s);
 void cube_to_string(const Cube *c, char out[NUM_FACELETS + 1]); /* face letters */
+/* Sets one face from nine color letters (WRGYOB, any case), in facelet order. The center must already be that
+ * color. Returns 0, -1 for not nine color letters, or -2 for a center that differs; *c is untouched on failure. */
+int cube_set_face(Cube *c, int face, const char *letters);
 
 /* NULL if the cube is a legal, solvable state; otherwise a description of the
  * problem. Implemented in cubie.c. */

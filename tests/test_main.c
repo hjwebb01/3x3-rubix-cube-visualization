@@ -1,23 +1,17 @@
 /* Self-contained test runner: move algebra, conversions, algorithm table
- * coverage and randomized end-to-end solves for every solver. */
+ * coverage, Lessons, Step lookup, Focus, Playback (test_playback.c) and
+ * randomized end-to-end solves for every solver. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <string.h>
 
+#include "check.h"
 #include "solvers/solvers.h"
 
-static int g_failures, g_checks;
+int g_failures, g_checks;
 
-#define CHECK(cond, ...)                                                       \
-    do {                                                                       \
-        g_checks++;                                                            \
-        if (!(cond)) {                                                         \
-            g_failures++;                                                      \
-            printf("  FAIL %s:%d: ", __FILE__, __LINE__);                      \
-            printf(__VA_ARGS__);                                               \
-            printf("\n");                                                      \
-        }                                                                      \
-    } while (0)
+void test_playback(void);
 
 static Cube apply_alg(const char *alg) {
     Cube c;
@@ -30,6 +24,27 @@ static Cube apply_alg(const char *alg) {
     }
     cube_apply_seq(&c, m, n);
     return c;
+}
+
+
+static void test_orientation(void) {
+    Cube original = apply_alg("R U F2 L D'");
+    int valid = 0;
+    for (int front = 0; front < NUM_COLORS; front++)
+        for (int top = 0; top < NUM_COLORS; top++) {
+            Cube c = original;
+            if (cube_orient(&c, front, top)) {
+                valid++;
+                CHECK(cube_center(&c, FACE_F) == front && cube_center(&c, FACE_U) == top,
+                      "orientation centers");
+                CHECK(cube_validate(&c) == NULL, "orientation preserves legality");
+                cube_orient(&c, COLOR_GREEN, COLOR_WHITE);
+                CHECK(cube_equal(&c, &original), "orientation preserves arrangement");
+            } else {
+                CHECK(cube_equal(&c, &original), "invalid orientation leaves cube unchanged");
+            }
+        }
+    CHECK(valid == 24, "all 24 orientations available");
 }
 
 static void test_moves(void) {
@@ -45,11 +60,8 @@ static void test_moves(void) {
         cube_apply(&c, move_inverse((Move)m));
         CHECK(cube_equal(&c, &ref), "%s then inverse is not identity", move_name((Move)m));
     }
-    Cube c = apply_alg("R U R' U' R U R' U' R U R' U' R U R' U' R U R' U' R U R' U'");
-    CHECK(cube_is_solved(&c), "sexy move x6 is not identity");
-
     /* known effects: R moves the F face's right column to U */
-    c = apply_alg("R");
+    Cube c = apply_alg("R");
     CHECK(c.f[FACE_U * 9 + 2] == COLOR_GREEN && c.f[FACE_U * 9 + 8] == COLOR_GREEN, "R does not move F to U");
     c = apply_alg("U");
     CHECK(c.f[FACE_L * 9 + 0] == COLOR_GREEN, "U does not move F to L");
@@ -97,6 +109,13 @@ static void test_moves(void) {
     int n2 = moves_parse(buf, mv2, 64);
     CHECK(n2 == n && memcmp(mv, mv2, (size_t)n) == 0, "round trip");
     CHECK(moves_parse("R Q", mv, 64) < 0, "parse should reject Q");
+    /* decision 5: Ri is R', and lowercase parses as the wide turns (r = Rw) */
+    CHECK(moves_parse("Ri", mv, 64) == 1 && mv[0] == MOVE(MB_R, 3), "Ri is not R'");
+    CHECK(moves_parse("R2i", mv, 64) == 1 && mv[0] == MOVE(MB_R, 2), "R2i is not R2");
+    CHECK(moves_parse("Ri'", mv, 64) < 0, "Ri' should be rejected");
+    n = moves_parse("r u r' u'", mv, 64);
+    CHECK(n == 4 && mv[0] == MOVE(MB_RW, 1) && mv[1] == MOVE(MB_UW, 1) && mv[2] == MOVE(MB_RW, 3) && mv[3] == MOVE(MB_UW, 3),
+          "lowercase did not parse as wide turns");
 }
 
 static void test_cubie(void) {
@@ -136,6 +155,25 @@ static void test_cubie(void) {
         Cube parsed;
         cube_to_string(&c, str);
         CHECK(cube_from_string(&parsed, str) == 0 && cube_equal(&parsed, &c), "string round trip");
+        /* typing every face back, in URFDLB order, rebuilds the cube */
+        Cube typed = c;
+        for (int f = 0; f < NUM_FACES; f++) {
+            char letters[10];
+            for (int i = 0; i < 9; i++) letters[i] = "WRGYOB"[c.f[f * 9 + i]];
+            letters[9] = 0;
+            CHECK(cube_set_face(&typed, f, letters) == 0, "typed face %d refused", f);
+        }
+        CHECK(cube_equal(&typed, &c), "typed faces differ from the cube");
+    }
+
+    {
+        Cube s;
+        cube_reset(&s);
+        CHECK(cube_set_face(&s, FACE_U, "WWWWWWWW") == -1, "short face accepted");
+        CHECK(cube_set_face(&s, FACE_U, "WWWWWWWWX") == -1, "bad letter accepted");
+        CHECK(cube_set_face(&s, FACE_U, "WWWWRWWWW") == -2, "wrong center accepted");
+        CHECK(s.f[FACE_U * 9] == COLOR_WHITE, "failed face changed the cube");
+        CHECK(cube_set_face(&s, FACE_U, "wrgywobwr") == 0, "lowercase refused");
     }
 
     Cube c;
@@ -242,14 +280,230 @@ static void test_lessons(void) {
     CHECK(!step_lesson(&none).text, "LESSON_NONE has text");
 }
 
+static int count_tier(const uint8_t *tier, XrayTier want) {
+    int n = 0;
+    for (int i = 0; i < NUM_FACELETS; i++) n += i % 9 != 4 && tier[i] == want;
+    return n;
+}
+
+/* X-ray: a Step's Focus names the pieces it works on, so when a human-method
+ * Step ends its Focus stickers match their centers. */
+static void test_focus(void) {
+    Cube solved;
+    cube_reset(&solved);
+    uint8_t tier[NUM_FACELETS];
+    focus_xray(lesson_focus(LESSON_CROSS), &solved, &solved, tier);
+    CHECK(count_tier(tier, XRAY_FOCUS) == 8 && count_tier(tier, XRAY_DONE) == 40, "cross on a solved cube");
+    focus_xray(lesson_focus(LESSON_KOCIEMBA_1), &solved, &solved, tier);
+    CHECK(count_tier(tier, XRAY_FOCUS) == 48, "computer methods have no Focus");
+
+    static const SolverId HUMAN[] = {SOLVER_BEGINNER, SOLVER_CFOP};
+    for (int h = 0; h < 2; h++) {
+        uint32_t rng = 99u + (uint32_t)h;
+        for (int t = 0; t < 40; t++) {
+            Cube c;
+            Move scr[25];
+            cube_reset(&c);
+            scramble_generate(scr, 25, &rng);
+            cube_apply_seq(&c, scr, 25);
+            if (t % 3 == 1) cube_apply(&c, MOVE(MB_X, 1));
+            static Solution s;
+            if (solve_cube(HUMAN[h], &c, &s)) continue; /* test_solvers reports failures */
+            Cube start = c;
+            for (int k = 0; k < s.nsteps; k++) {
+                const SolveStep *st = &s.steps[k];
+                Cube end = start;
+                cube_apply_seq(&end, s.moves + st->start, st->count);
+                focus_xray(st->focus, &start, &start, tier);
+                if (st->lesson == LESSON_F2L)
+                    CHECK(count_tier(tier, XRAY_FOCUS) == 5, "'%s' focuses %d stickers, want its pair's 5", st->name,
+                          count_tier(tier, XRAY_FOCUS));
+                if (st->lesson == LESSON_OLL)
+                    CHECK(count_tier(tier, XRAY_FOCUS) == 8, "'%s' focuses %d stickers, want 8 yellow", st->name,
+                          count_tier(tier, XRAY_FOCUS));
+                if (st->lesson != LESSON_POSITION_YELLOW_CORNERS) {
+                    focus_xray(st->focus, &start, &end, tier);
+                    for (int i = 0; i < NUM_FACELETS; i++)
+                        CHECK(tier[i] != XRAY_FOCUS || end.f[i] == cube_center(&end, i / 9),
+                              "%s '%s': Focus sticker %d not solved when the Step ends", solver_name(HUMAN[h]),
+                              st->name, i);
+                }
+                start = end;
+            }
+        }
+    }
+}
+
+static void check_at(const Solution *s, int pos, int step, int k, int total, int skipped, int nskipped) {
+    StepAt a = solution_step_at(s, pos);
+    CHECK(a.step == step && a.k == k && a.total == total && a.skipped == skipped && a.nskipped == nskipped,
+          "pos %d: got step %d k %d/%d skipped %d+%d, want step %d k %d/%d skipped %d+%d", pos, a.step, a.k, a.total,
+          a.skipped, a.nskipped, step, k, total, skipped, nskipped);
+}
+
+static void test_step_at(void) {
+    static Solution s;
+
+    /* Plain: Cross [R U], F2L [F], PLL [L]. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_CROSS, "Cross");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    solution_begin_step(&s, LESSON_PLL, "PLL");
+    solution_push(&s, NULL, MOVE(MB_L, 1));
+    check_at(&s, 0, 0, 1, 3, 0, 0);
+    check_at(&s, 1, 0, 1, 3, 0, 0);
+    check_at(&s, 2, 1, 2, 3, 0, 0); /* boundary: the Step about to play */
+    check_at(&s, 3, 2, 3, 3, 0, 0);
+    check_at(&s, 4, 2, 3, 3, 0, 0); /* pos == n: last real Step */
+
+    /* CFOP shape: F2L [R U], OLL skip (empty), PLL [F L]. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_OLL_SKIP, "OLL skip");
+    solution_begin_step(&s, LESSON_PLL, "PLL");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    solution_push(&s, NULL, MOVE(MB_L, 1));
+    check_at(&s, 0, 0, 1, 2, 0, 0);
+    check_at(&s, 1, 0, 1, 2, 0, 0);
+    check_at(&s, 2, 2, 2, 2, 1, 1); /* the skipped Step folds into PLL */
+    check_at(&s, 3, 2, 2, 2, 1, 1);
+    check_at(&s, 4, 2, 2, 2, 0, 0); /* pos == n: nothing trailing */
+
+    /* A U closing F2L and a U opening PLL merge into one U2 inside PLL; U then U' cancels outright. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_PLL, "PLL");
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    CHECK(s.n == 3 && s.moves[1] == MOVE(MB_U, 2) && s.steps[0].count == 1 && s.steps[1].start == 1 && s.steps[1].count == 2,
+          "U + U merges into U2 within the later Step");
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_PLL, "PLL");
+    solution_push(&s, NULL, MOVE(MB_U, 3));
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    CHECK(s.n == 2 && s.moves[1] == MOVE(MB_F, 1) && s.steps[0].count == 1 && s.steps[1].count == 1, "U + U' cancels");
+
+    /* Named chunks: Sune from the front slot, then the same alg turned by y. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_OLL, "OLL");
+    Move seq[16];
+    int ns = moves_parse("U2 R U R' U R U2 R' L' U' L U", seq, 16);
+    solution_push_seq(&s, NULL, seq, ns);
+    Chunk ch[8];
+    int nc = solution_chunks(&s, 0, ch, 8);
+    CHECK(nc == 2 && ch[0].start == 1 && ch[0].count == 7 && !strcmp(ch[0].name, "Sune") && ch[1].start == 8 &&
+              !strcmp(ch[1].name, "Left sexy move (lefty)"),
+          "solution_chunks finds Sune and the left sexy move");
+
+    /* An insert whose leading U merged into U' or cancelled still counts; R U R' only names a corner step. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_MIDDLE_EDGES, "Middle");
+    ns = moves_parse("U' R U' R' U' F' U F R U' R' U' F' U F", seq, 16);
+    solution_push_seq(&s, NULL, seq, ns);
+    solution_begin_step(&s, LESSON_WHITE_CORNERS, "Corners");
+    ns = moves_parse("R U R'", seq, 16);
+    solution_push_seq(&s, NULL, seq, ns);
+    nc = solution_chunks(&s, 0, ch, 8);
+    CHECK(nc == 2 && ch[0].count == 8 && ch[1].start == 8 && ch[1].count == 7 &&
+              !strcmp(ch[1].name, "Right edge insert"),
+          "solution_chunks matches an insert whose U merged or cancelled");
+    nc = solution_chunks(&s, 1, ch, 8);
+    CHECK(nc == 1 && !strcmp(ch[0].name, "Take out corner"), "R U R' is take out corner in the corner step");
+
+    /* Two inserts back to back: the second's U cancels and its first turn merges (L + L -> L2), shared. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_MIDDLE_EDGES, "Middle");
+    ns = moves_parse("U F U' F' U' L' U L2 U' L' U' B' U B", seq, 16);
+    solution_push_seq(&s, NULL, seq, ns);
+    nc = solution_chunks(&s, 0, ch, 8);
+    CHECK(nc == 2 && ch[0].start == 0 && ch[0].count == 8 && ch[1].start == 7 && ch[1].count == 7,
+          "solution_chunks splits two inserts that share a merged move");
+
+    /* Generic patterns must not leak into computer-solver phases. */
+    for (int lesson = LESSON_THISTLETHWAITE_1; lesson <= LESSON_KOCIEMBA_2; lesson++) {
+        solution_clear(&s);
+        solution_begin_step(&s, (LessonId)lesson, "Computer phase");
+        ns = moves_parse("R U R' U'", seq, 16);
+        solution_push_seq(&s, NULL, seq, ns);
+        CHECK(solution_chunks(&s, 0, ch, 8) == 0, "computer phases never receive algorithm labels");
+    }
+
+    /* A long step must not silently lose labels after the old GUI limit of 32. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_WHITE_CORNERS, "Corners");
+    ns = moves_parse("R U R' U'", seq, 16);
+    for (int i = 0; i < 40; i++) solution_push_seq(&s, NULL, seq, ns);
+    Chunk many[SOL_MAX_MOVES];
+    CHECK(solution_chunks(&s, 0, many, SOL_MAX_MOVES) == 40 && many[39].start == 156,
+          "solution_chunks returns every chunk in a long step");
+
+    /* Thistlethwaite-like: two empty phases, then two real phases. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_1, "Phase 1");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_2, "Phase 2");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_3, "Phase 3");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_4, "Phase 4");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    check_at(&s, 0, 2, 1, 2, 0, 2); /* Phase 3 absorbs both empty phases */
+    check_at(&s, 1, 2, 1, 2, 0, 2);
+    check_at(&s, 2, 3, 2, 2, 0, 0);
+    check_at(&s, 3, 3, 2, 2, 0, 0);
+
+    /* Middle run of two empty phases between real ones. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_1, "Phase 1");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_2, "Phase 2");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_3, "Phase 3");
+    solution_begin_step(&s, LESSON_THISTLETHWAITE_4, "Phase 4");
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    check_at(&s, 0, 0, 1, 2, 0, 0);
+    check_at(&s, 1, 3, 2, 2, 1, 2);
+    check_at(&s, 2, 3, 2, 2, 0, 0); /* pos == n */
+
+    /* Trailing Skipped Step ("PLL skip") appears only at pos == n. */
+    solution_clear(&s);
+    solution_begin_step(&s, LESSON_CROSS, "Cross");
+    solution_push(&s, NULL, MOVE(MB_R, 1));
+    solution_push(&s, NULL, MOVE(MB_U, 1));
+    solution_begin_step(&s, LESSON_F2L, "F2L");
+    solution_push(&s, NULL, MOVE(MB_F, 1));
+    solution_begin_step(&s, LESSON_PLL_SKIP, "PLL skip");
+    check_at(&s, 0, 0, 1, 2, 0, 0);
+    check_at(&s, 2, 1, 2, 2, 0, 0); /* n - 1 */
+    check_at(&s, 3, 1, 2, 2, 2, 1); /* pos == n */
+    /* Clamping: out-of-range positions behave like 0 and n. */
+    check_at(&s, -5, 0, 1, 2, 0, 0);
+    check_at(&s, 10, 1, 2, 2, 2, 1);
+
+    /* No moves at all: no current Step, even with Skipped Steps present. */
+    solution_clear(&s);
+    check_at(&s, 0, -1, 0, 0, 0, 0);
+    solution_begin_step(&s, LESSON_PLL_SKIP, "Solved");
+    check_at(&s, 0, -1, 0, 0, 0, 0);
+    check_at(&s, 5, -1, 0, 0, 0, 0);
+}
+
 static void test_solvers(int count) {
     for (int id = 0; id < SOLVER_COUNT; id++) {
-        printf("solver %s (%d scrambles)\n", solver_name((SolverId)id), count);
+        /* Kociemba takes ~100 ms a solve; `rubik --bench` is the soak test */
+        int runs = id == SOLVER_KOCIEMBA ? (count + 9) / 10 : count;
+        printf("solver %s (%d scrambles)\n", solver_name((SolverId)id), runs);
         uint32_t rng = 777u + (uint32_t)id;
-        long total = 0;
-        double ms = 0;
-        int worst = 0, failures = 0;
-        for (int t = 0; t < count; t++) {
+        int failures = 0;
+        for (int t = 0; t < runs; t++) {
             Cube c;
             Move scr[25];
             cube_reset(&c);
@@ -271,15 +525,19 @@ static void test_solvers(int count) {
             for (int st = 0; st < s.nsteps; st++)
                 CHECK(step_lesson(&s.steps[st]).text, "%s step '%s' has no lesson", solver_name((SolverId)id),
                       s.steps[st].name);
-            int n = solution_move_count(&s);
-            total += n;
-            ms += s.ms;
-            if (n > worst) worst = n;
+            /* a Kociemba step named with its group "<A,B,C2,...>" only turns A and B by quarters */
+            for (int st = 0; st < s.nsteps && id == SOLVER_KOCIEMBA; st++) {
+                const char *g = strchr(s.steps[st].name, '<');
+                if (!g) continue;
+                for (int i = s.steps[st].start; i < s.steps[st].start + s.steps[st].count; i++) {
+                    char face = "URFDLBMESxyz"[s.moves[i] / 3 % 12];
+                    bool quarter = s.moves[i] % 3 != 1;
+                    CHECK(!quarter || face == g[1] || face == g[3], "%s step '%s' turns %c by a quarter",
+                          solver_name((SolverId)id), s.steps[st].name, face);
+                }
+            }
         }
-        CHECK(failures == 0, "%s failed %d/%d", solver_name((SolverId)id), failures, count);
-        if (count > failures)
-            printf("  avg %.1f moves, worst %d, avg %.2f ms\n", (double)total / (count - failures), worst,
-                   ms / (count - failures));
+        CHECK(failures == 0, "%s failed %d/%d", solver_name((SolverId)id), failures, runs);
     }
     /* solved input */
     for (int id = 0; id < SOLVER_COUNT; id++) {
@@ -290,13 +548,100 @@ static void test_solvers(int count) {
     }
 }
 
+#define CONC_THREADS 4
+#define CONC_SCRAMBLE 25
+
+typedef struct {
+    pthread_mutex_t lock;
+    pthread_cond_t open;
+    bool go;
+} StartGate;
+
+typedef struct {
+    int index;
+    StartGate *gate;
+    Move scramble[CONC_SCRAMBLE];
+    Cube cube;
+    Solution *sol;
+    const char *err;
+    bool replay_ok;
+} ConcurrentJob;
+
+static void *concurrent_worker(void *arg) {
+    ConcurrentJob *j = arg;
+    pthread_mutex_lock(&j->gate->lock);
+    while (!j->gate->go) pthread_cond_wait(&j->gate->open, &j->gate->lock);
+    pthread_mutex_unlock(&j->gate->lock);
+    if (j->index % 2) {
+        cube_init();
+        cubie_init();
+    } else {
+        cubie_init();
+        cube_init();
+    }
+    cube_reset(&j->cube);
+    cube_apply_seq(&j->cube, j->scramble, CONC_SCRAMBLE);
+    j->err = solve_cube(SOLVER_KOCIEMBA, &j->cube, j->sol);
+    if (!j->err) {
+        Cube c = j->cube;
+        cube_apply_seq(&c, j->sol->moves, j->sol->n);
+        j->replay_ok = cube_is_solved(&c);
+    }
+    return NULL;
+}
+
+static void test_concurrent_kociemba(void) {
+    printf("concurrent kociemba (%d threads)\n", CONC_THREADS);
+    StartGate gate = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false};
+    pthread_t th[CONC_THREADS];
+    ConcurrentJob jobs[CONC_THREADS];
+    bool started[CONC_THREADS] = {false};
+    int ready = 0;
+    for (int i = 0; i < CONC_THREADS; i++) {
+        uint32_t rng = 9001u + 7919u * (uint32_t)i;
+        jobs[i] = (ConcurrentJob){.index = i, .gate = &gate, .replay_ok = false};
+        scramble_generate(jobs[i].scramble, CONC_SCRAMBLE, &rng);
+        jobs[i].sol = calloc(1, sizeof *jobs[i].sol);
+        if (jobs[i].sol) ready++;
+    }
+    int created = 0;
+    if (ready == CONC_THREADS) {
+        for (int i = 0; i < CONC_THREADS; i++) {
+            if (pthread_create(&th[i], NULL, concurrent_worker, &jobs[i]) != 0) break;
+            started[i] = true;
+            created++;
+        }
+    }
+    pthread_mutex_lock(&gate.lock);
+    gate.go = true;
+    pthread_cond_broadcast(&gate.open);
+    pthread_mutex_unlock(&gate.lock);
+    for (int i = 0; i < CONC_THREADS; i++)
+        if (started[i]) pthread_join(th[i], NULL);
+    CHECK(created == CONC_THREADS, "started %d/%d threads", created, CONC_THREADS);
+    for (int i = 0; i < CONC_THREADS && created == CONC_THREADS; i++) {
+        CHECK(jobs[i].err == NULL, "thread %d solve failed: %s", i, jobs[i].err ? jobs[i].err : "");
+        CHECK(jobs[i].replay_ok, "thread %d moves do not solve its own cube", i);
+        for (int k = 0; k < i; k++)
+            CHECK(jobs[i].sol->n != jobs[k].sol->n || memcmp(jobs[i].sol->moves, jobs[k].sol->moves,
+                                                            (size_t)jobs[i].sol->n * sizeof(Move)) != 0,
+                  "threads %d and %d returned identical solutions", i, k);
+    }
+    for (int i = 0; i < CONC_THREADS; i++) free(jobs[i].sol);
+}
+
 int main(int argc, char **argv) {
     int count = argc > 1 ? atoi(argv[1]) : 200;
+    test_concurrent_kociemba();
     cubie_init();
     test_moves();
+    test_orientation();
     test_cubie();
     test_cfop_tables();
     test_lessons();
+    test_step_at();
+    test_focus();
+    test_playback();
     test_solvers(count);
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

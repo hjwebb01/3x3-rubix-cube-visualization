@@ -11,10 +11,10 @@
 static const struct {
     const char *name, *key, *desc;
 } SOLVER_INFO[SOLVER_COUNT] = {
-    [SOLVER_BEGINNER] = {"Beginner", "beginner", "Layer by layer, the way most people learn (~100-150 moves)"},
+    [SOLVER_BEGINNER] = {"Beginner", "beginner", "Layer by layer, the way most people learn (~160 moves)"},
     [SOLVER_CFOP] = {"CFOP", "cfop", "Cross, F2L, OLL (57 algs), PLL (21 algs) (~55-65 moves)"},
     [SOLVER_THISTLETHWAITE] = {"Thistlethwaite", "thistlethwaite", "4-phase subgroup descent, bidirectional BFS (~30-45 moves)"},
-    [SOLVER_KOCIEMBA] = {"Kociemba", "kociemba", "Two-phase IDA* with pruning tables (~19-22 moves)"},
+    [SOLVER_KOCIEMBA] = {"Kociemba", "kociemba", "Two-phase IDA* with pruning tables (~18-19 moves)"},
 };
 
 const char *solver_name(SolverId id) { return id < SOLVER_COUNT ? SOLVER_INFO[id].name : "?"; }
@@ -43,6 +43,7 @@ static void begin_step(Solution *s, LessonId lesson, const char *note, const cha
     vsnprintf(st->name, sizeof st->name, fmt, ap);
     st->lesson = lesson;
     st->note = note;
+    st->focus = lesson_focus(lesson);
     st->start = s->n;
     st->count = 0;
 }
@@ -61,10 +62,35 @@ void solution_begin_step_note(Solution *s, LessonId lesson, const char *note, co
     va_end(ap);
 }
 
+void solution_set_focus(Solution *s, Focus f) {
+    if (s->nsteps > 0) s->steps[s->nsteps - 1].focus = f;
+}
+
+/* A U turn that opens OLL or PLL joins a U turn that closed F2L or OLL: neither Step's end state (first two
+ * layers solved, top face one color) depends on U, so the merged turn belongs to the later Step.
+ * Returns true when m was absorbed. */
+static bool merge_into_last_layer(Solution *s, SolveStep *st, Move m) {
+    if (s->n == 0 || MOVE_BASE(m) != MB_U || (st->lesson != LESSON_OLL && st->lesson != LESSON_PLL)) return false;
+    Move last = s->moves[s->n - 1];
+    SolveStep *prev = st - 1;
+    while (prev > s->steps && prev->count == 0) prev--;
+    if (MOVE_BASE(last) != MB_U || (prev->lesson != LESSON_F2L && prev->lesson != LESSON_OLL) || prev == st) return false;
+    int t = (MOVE_TURNS(last) + MOVE_TURNS(m)) % 4;
+    prev->count--;
+    s->n--;
+    for (SolveStep *e = prev + 1; e <= st; e++) e->start = s->n; /* the empty Steps between, and st itself */
+    if (t) {
+        s->moves[s->n++] = MOVE(MB_U, t);
+        st->count = 1;
+    }
+    return true;
+}
+
 void solution_push(Solution *s, Cube *c, Move m) {
     if (c) cube_apply(c, m);
     if (s->nsteps == 0) solution_begin_step(s, LESSON_NONE, "Solve");
     SolveStep *st = &s->steps[s->nsteps - 1];
+    if (st->count == 0 && merge_into_last_layer(s, st, m)) return;
     if (st->count > 0) {
         Move last = s->moves[s->n - 1];
         if (MOVE_BASE(last) == MOVE_BASE(m)) {
@@ -98,11 +124,59 @@ int solution_step_move_count(const Solution *s, int step) {
     return n;
 }
 
-int solution_move_count(const Solution *s) {
+int solution_move_count_to(const Solution *s, int pos) {
     int n = 0;
-    for (int i = 0; i < s->n; i++)
+    for (int i = 0; i < pos && i < s->n; i++)
         if (!move_is_rotation(s->moves[i])) n++;
     return n;
+}
+
+int solution_move_count(const Solution *s) { return solution_move_count_to(s, s->n); }
+
+StepAt solution_step_at(const Solution *s, int pos) {
+    StepAt r = {.step = -1};
+    if (pos < 0) pos = 0;
+    if (pos > s->n) pos = s->n;
+    if (s->n == 0) return r;
+
+    int total = 0, last = -1;
+    for (int i = 0; i < s->nsteps; i++)
+        if (s->steps[i].count > 0) {
+            total++;
+            last = i;
+        }
+
+    int cur = -1;
+    if (pos == s->n) {
+        cur = last;
+    } else {
+        for (int i = 0; i < s->nsteps && cur < 0; i++) {
+            const SolveStep *st = &s->steps[i];
+            if (st->count > 0 && st->start <= pos && pos < st->start + st->count) cur = i;
+        }
+    }
+    if (cur < 0) return r;
+
+    r.step = cur;
+    r.total = total;
+    for (int i = 0; i <= cur; i++)
+        if (s->steps[i].count > 0) r.k++;
+
+    /* Skipped Steps before cur (back to the previous real Step), or after the
+     * last real Step when pos == n. */
+    if (pos < s->n) {
+        int first = cur;
+        while (first > 0 && s->steps[first - 1].count == 0) first--;
+        r.skipped = first;
+        r.nskipped = cur - first;
+    } else {
+        int end = cur + 1;
+        while (end < s->nsteps && s->steps[end].count == 0) end++;
+        r.skipped = cur + 1;
+        r.nskipped = end - (cur + 1);
+    }
+    if (r.nskipped == 0) r.skipped = 0;
+    return r;
 }
 
 static double now_ms(void) {

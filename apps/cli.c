@@ -78,6 +78,14 @@ static void usage(const char *argv0) {
 }
 
 static int bench(int count, int method, uint32_t seed) {
+    if (method < 0 || method == SOLVER_KOCIEMBA) {
+        /* one-off cost, reported apart from the per-solve times */
+        struct timespec a, b;
+        clock_gettime(CLOCK_MONOTONIC, &a);
+        kociemba_warm();
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        printf("Kociemba tables built in %.0f ms\n", (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6);
+    }
     printf("%-15s %8s %8s %8s %10s\n", "method", "avg", "min", "max", "avg ms");
     for (int id = 0; id < SOLVER_COUNT; id++) {
         if (method >= 0 && id != method) continue;
@@ -103,7 +111,7 @@ static int bench(int count, int method, uint32_t seed) {
             if (n < lo) lo = n;
             if (n > hi) hi = n;
         }
-        printf("%-15s %8.1f %8d %8d %10.2f\n", solver_name((SolverId)id), (double)total / count, lo, hi,
+        printf("%-15s %8.3f %8d %8d %10.2f\n", solver_name((SolverId)id), (double)total / count, lo, hi,
                total_ms / count);
     }
     return 0;

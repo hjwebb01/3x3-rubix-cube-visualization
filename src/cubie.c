@@ -1,5 +1,6 @@
 #include "cube/cubie.h"
 
+#include <pthread.h>
 #include <string.h>
 
 const uint8_t CORNER_FACELET[NUM_CORNERS][3] = {
@@ -20,7 +21,7 @@ const uint8_t EDGE_FACELET[NUM_EDGES][2] = {
 };
 
 static CubieCube g_moves[NUM_FACE_MOVES];
-static bool g_ready;
+static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 
 void cubie_reset(CubieCube *c) {
     for (int i = 0; i < NUM_CORNERS; i++) c->cp[i] = (uint8_t)i, c->co[i] = 0;
@@ -33,8 +34,7 @@ bool cubie_is_solved(const CubieCube *c) {
     return memcmp(c, &s, sizeof s) == 0;
 }
 
-void cubie_init(void) {
-    if (g_ready) return;
+static void cubie_init_once(void) {
     cube_init();
     for (int m = 0; m < NUM_FACE_MOVES; m++) {
         Cube c;
@@ -42,8 +42,9 @@ void cubie_init(void) {
         cube_apply(&c, (Move)m);
         cubie_from_cube(&c, &g_moves[m]);
     }
-    g_ready = true;
 }
+
+void cubie_init(void) { pthread_once(&g_once, cubie_init_once); }
 
 const char *cubie_from_cube(const Cube *in, CubieCube *out) {
     int face_of[256];

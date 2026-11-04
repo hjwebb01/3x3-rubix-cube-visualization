@@ -37,23 +37,29 @@ If raylib (version 5 or later) is not installed, CMake downloads raylib 5.5 auto
 ./build/rubik_gui
 ```
 
-- **Scramble / Reset**, pick a **method**, then **Solve**. The solver runs on a background thread.
-- **Learn:** a lesson box above the solution explains the current step: its goal, what to look for and the algorithm to memorize. Turn on **Teach mode** to pause at the start of every step so you can read it, then press Play to watch the moves.
-- **Playback:** play/pause, step, jump to the start or end, and set the speed (from slow to instant). Click any move or step in the solution list to jump there, or drag the progress bar.
-- **Keys:** `U R F D L B M E S X Y Z` turn the cube, and `Shift` makes the move prime. `Space` plays or pauses. The arrow keys step, and `Home`/`End` jump. `Enter` solves and `Ctrl+S` scrambles.
-- **Type moves:** you can enter any sequence in standard notation, including wide moves (`Rw`/`r`), slices, rotations and brackets.
-- **Edit stickers:** choose a color, then click stickers on the 3D cube or the net to paint them. **Check** tells you whether the state is legal (twisted corners, flipped edges, parity and so on).
+The window is split by the **seam**. The left half is your cube, in your hand: its setup, its Solution and the Lesson for the current Step. The right half is the cube on screen, with its move list. The seam between them shows whether the two cubes are in sync, and everything is typed into one prompt along the bottom. Side by side the halves split the width evenly from 1008 px wide; narrower, the panels keep their minimum widths and the screen cube gets less than half. Below 900 px wide the halves stack: the left half becomes a band across the top, taking most of the height (less while coaching), the seam runs across the window and the screen cube sits below.
+
+- **Two ways in:** **I have a cube** matches the screen to your cube, by painting it or by a guided scramble, then coaches you through the Steps (Beginner and CFOP only). **Give me a scramble** shows a scramble to do on your cube, and the seam starts sealed.
+- **Prompt:** type moves in standard notation, including wide moves (`Rw`/`r`), slices, rotations, brackets, and `R'` or `Ri`. Or use a command:
+  - `teach` solves with Beginner and turns X-ray on, `faster` with CFOP, and `show` with Kociemba (`show thistle` for Thistlethwaite). Each card shows its Move count.
+  - `solve`, `scramble`, `reset`, `undo`, `xray` and `help` do what their buttons and shortcuts do. `help` shows the keyboard list.
+  - While a Step is practised, typed moves are checked against it: the Step's moves (rotations skipped) play the Step through on screen, and anything else tears the seam. While a torn seam is waiting, `fix` returns to the Step's start, `trust` followed by moves makes them the truth and solves again, and `paint top` repaints only the top face.
+  - At a Teach pause the prompt asks for the next move: typing it resumes playing.
+- **Keys:** `U R F D L B M E S X Y Z` turn the cube, and `Shift` makes the move prime. `Space` plays or pauses the Solution, and `Left`/`Right` step through it. `Home`/`End` jump to either end, `Page Up`/`Page Down` to the previous or next Step, and `-`/`=` slow down or speed up. `H` toggles X-ray and `V` shows the screen only, which hides the seam and both halves. `Enter` solves, `Ctrl+S` scrambles and `Ctrl+Z` undoes the last Scramble or Reset. `Space`, the arrows and `Esc` act only while the prompt is empty. `Tab` and `Shift+Tab` move between the controls, and `Enter` or `Space` presses the focused one.
+- **Seam:** drag it to scrub through the Solution. Each Step has a notch at its start. Click any move or Step in the list to jump there.
+- **Learn:** tick **Pause to explain each step** to pause at the start of every Step so you can read its lesson, then press `Space` to watch the moves. Tick **Highlight each step's pieces** (or press `H`) to fade the parts of the cube the current step ignores. The computer methods have no X-ray.
+- **Paint stickers:** choose a color, then click stickers on the 3D cube or the net to paint them. Or type a face into the prompt as nine color letters (`W R G Y O B`) in facelet order, starting with U and then R F D L B; the centre must match the one already there, and **Check cube** runs after the sixth face. Without a mouse, `Tab` to a sticker on the net and press `Enter`. **Check cube** tells you whether the state is legal (twisted corners, flipped edges, parity and so on).
 - **Camera:** drag to orbit and use the mouse wheel to zoom.
 
 ## Layout
 
 ```
 include/cube/   cube.h (facelet model, moves, notation), cubie.h, solver.h
-src/            cube.c, cubie.c (cubie model, validation), solution.c (dispatcher)
+src/            cube.c, cubie.c (cubie model, validation), solution.c (dispatcher), lessons.c, focus.c
 src/solvers/    beginner.c, cfop.c, cfop_algs.c, thistlethwaite.c, kociemba.c, common.c
 apps/cli.c      command-line tool
-apps/gui/       raylib front end (main.c, render.c, ui.c)
-tests/          move algebra, conversions, full OLL/PLL/F2L coverage, solver fuzzing
+apps/gui/       raylib front end (main.c, render.c, ui.c) and playback.c/.h (raylib-free playback)
+tests/          move algebra, conversions, full OLL/PLL/F2L coverage, solver fuzzing, playback
 ```
 
 The stickers use Kociemba's URFDLB facelet order. All move permutations are generated from 3D geometry, so face turns, slices, wide moves and rotations always agree with each other and with the animation.
